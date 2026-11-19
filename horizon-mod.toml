@@ -18,19 +18,19 @@ source = "src/lib.rs"
 [[native.mixin]]
 id = "zoom-hook"
 kind = "HEAD"
-target = "horizon_client::game::native_hooks::Game<'_>::native_zoom"
+target = "horizon_client::game::native_hooks::base::Game<'_>::native_zoom"
 helper = "src/zoom.rs"
-bindings = [{ name = "zoom", ty = "&mut Option<crate::game::native_hooks::NativeZoom>", value = "zoom" }]
+bindings = [{ name = "zoom", ty = "&mut Option<mod_api::Zoom>", value = "zoom" }]
 
 [[native.mixin]]
 id = "key-hook"
 kind = "HEAD"
-target = "horizon_client::game::native_hooks::Game<'_>::native_key"
+target = "horizon_client::game::native_hooks::input_key::Game<'_>::native_input_key"
 helper = "src/key.rs"
 bindings = [
     { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
     { name = "key", ty = "&str", value = "key" },
-    { name = "pressed", ty = "bool", value = "pressed" },
+    { name = "action", ty = "mod_api::KeyAction", value = "action" },
 ]
 
 [[native.mixin]]
