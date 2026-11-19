@@ -1,40 +1,43 @@
-[mod]
 id = "camera_utils"
+name = "Camera Utils"
 version = "0.1.0"
-priority = 100
+api = "0.2"
+capabilities = ["registries"]
 
-[compatibility]
-horizon_revision = "ba6344a59cb9e755b730dcf02285fc0d33b97d3c"
+[native]
+game = "26.3"
+horizon = "ba6344a59cb9e755b730dcf02285fc0d33b97d3c"
+mixins = "d9c83d7096b7ea5b83678da2efdfd6161f74997e"
 
-[[module]]
+[[native.module]]
 id = "runtime"
 file = "crates/horizon-client/src/game.rs"
 name = "camera_utils"
-source = "runtime.rs"
+source = "src/lib.rs"
 
-[[injection]]
+[[native.mixin]]
 id = "zoom-hook"
 kind = "HEAD"
 target = "horizon_client::game::native_hooks::Game<'_>::native_zoom"
-helper = "zoom.rs"
+helper = "src/zoom.rs"
 bindings = [{ name = "zoom", ty = "&mut Option<crate::game::native_hooks::NativeZoom>", value = "zoom" }]
 
-[[injection]]
+[[native.mixin]]
 id = "key-hook"
 kind = "HEAD"
 target = "horizon_client::game::native_hooks::Game<'_>::native_key"
-helper = "key.rs"
+helper = "src/key.rs"
 bindings = [
     { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
     { name = "key", ty = "&str", value = "key" },
     { name = "pressed", ty = "bool", value = "pressed" },
 ]
 
-[[injection]]
+[[native.mixin]]
 id = "turn-hook"
 kind = "HEAD"
 target = "horizon_client::game::perspective::Game<'_>::turn_player"
-helper = "turn.rs"
+helper = "src/turn.rs"
 bindings = [
     { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
     { name = "xo", ty = "f64", value = "xo" },
