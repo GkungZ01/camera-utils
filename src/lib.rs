@@ -1,6 +1,14 @@
 // camera-utils runtime for Horizon (Freecam, Freelock, Zoom)
 // Standalone testable Cargo library and injected crate::game::camera_utils module.
 
+#[cfg(not(test))]
+#[derive(Default)]
+pub struct CameraUtilsMod;
+
+#[cfg(not(test))]
+#[mod_api::horizon_mod]
+impl mod_api::Hooks for CameraUtilsMod {}
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
