@@ -6,8 +6,8 @@ capabilities = ["registries"]
 
 [native]
 game = "26.3"
-horizon = "ba6344a59cb9e755b730dcf02285fc0d33b97d3c"
-mixins = "d9c83d7096b7ea5b83678da2efdfd6161f74997e"
+horizon = "dd67b76ff23e28c6d8e21859df600d31572f81a0"
+mixins = "e59da9094f0c2fdda6c627fe9eff22dec6a906f0"
 
 [[native.module]]
 id = "runtime"
