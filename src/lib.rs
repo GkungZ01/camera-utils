@@ -1,16 +1,11 @@
 // camera-utils runtime for Horizon (Freecam, Freelock, Zoom)
-// Standalone testable Cargo library and injected crate::game::camera_utils module.
-
-#[cfg(not(test))]
-#[derive(Default)]
-pub struct CameraUtilsMod;
-
-#[cfg(not(test))]
-#[mod_api::horizon_mod]
-impl mod_api::Hooks for CameraUtilsMod {}
+// Pure Native Mod API implementation (zero mixins, no private item conflicts).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+
+#[derive(Default)]
+pub struct CameraUtilsMod;
 
 pub static ZOOM_PRESSED: AtomicBool = AtomicBool::new(false);
 pub static FREELOCK_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -61,7 +56,14 @@ impl CameraState {
         Self::default()
     }
 
-    pub fn handle_key(&mut self, key: &str, pressed: bool, current_pos: [f64; 3], current_yaw: f32, current_pitch: f32) {
+    pub fn handle_key(
+        &mut self,
+        key: &str,
+        pressed: bool,
+        current_pos: [f64; 3],
+        current_yaw: f32,
+        current_pitch: f32,
+    ) {
         match key {
             // Key C for Zoom (Hold to zoom)
             "key.keyboard.c" => {
@@ -177,6 +179,59 @@ pub fn on_turn_input(xo: f64, yo: f64) {
 
 pub fn is_freecam_active() -> bool {
     FREECAM_ACTIVE.load(Ordering::Relaxed)
+}
+
+#[cfg(not(test))]
+#[mod_api::horizon_mod]
+impl mod_api::Hooks for CameraUtilsMod {
+    fn input_key(&self, host: &mut dyn mod_api::ClientHost, event: &mut mod_api::InputKeyEvent<'_>) {
+        let is_down = matches!(event.action, mod_api::KeyAction::Press | mod_api::KeyAction::Repeat);
+        let is_press = matches!(event.action, mod_api::KeyAction::Press);
+
+        let (pos, yaw, pitch) = if let Some(cam) = host.camera() {
+            (cam.position, cam.yaw, cam.pitch)
+        } else {
+            ([0.0; 3], 0.0, 0.0)
+        };
+
+        if event.key == "key.keyboard.c" {
+            on_native_key(event.key, is_down, pos, yaw, pitch);
+        } else if (event.key == "key.keyboard.x" || event.key == "key.keyboard.u") && is_press {
+            on_native_key(event.key, true, pos, yaw, pitch);
+        }
+    }
+
+    fn zoom(&self, _host: &dyn mod_api::ClientHost, _event: &mut mod_api::ZoomEvent) -> Option<mod_api::Zoom> {
+        if ZOOM_PRESSED.load(Ordering::Relaxed) {
+            Some(mod_api::Zoom {
+                factor: 4.0,
+                smooth: true,
+                turn: 0.25,
+            })
+        } else {
+            None
+        }
+    }
+
+    fn calculate_player_turn(&self, _host: &dyn mod_api::ClientHost, event: &mut mod_api::CalculatePlayerTurnEvent) {
+        if is_freelock_or_freecam() {
+            // Decouple mouse look from actual player rotation packet
+            event.mouse_sensitivity = 0.0;
+        }
+    }
+
+    fn camera_pose(&self, _host: &dyn mod_api::ClientHost, event: &mut mod_api::CameraPoseEvent) {
+        if let Ok(cam) = GLOBAL_CAMERA.lock() {
+            if cam.is_freecam {
+                *event.position = cam.freecam_pos;
+                event.yaw = cam.freecam_yaw;
+                event.pitch = cam.freecam_pitch;
+            } else if cam.is_freelock {
+                event.yaw = cam.freelock_yaw;
+                event.pitch = cam.freelock_pitch;
+            }
+        }
+    }
 }
 
 #[cfg(test)]

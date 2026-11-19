@@ -8,38 +8,3 @@ capabilities = ["registries"]
 game = "26.3"
 horizon = "dd67b76ff23e28c6d8e21859df600d31572f81a0"
 mixins = "e59da9094f0c2fdda6c627fe9eff22dec6a906f0"
-
-[[native.module]]
-id = "runtime"
-file = "crates/horizon-client/src/game.rs"
-name = "camera_utils"
-source = "src/lib.rs"
-
-[[native.mixin]]
-id = "zoom-hook"
-kind = "HEAD"
-target = "horizon_client::game::native_hooks::base::Game<'_>::native_zoom"
-helper = "src/zoom.rs"
-bindings = [{ name = "zoom", ty = "&mut Option<mod_api::Zoom>", value = "zoom" }]
-
-[[native.mixin]]
-id = "key-hook"
-kind = "HEAD"
-target = "horizon_client::game::native_hooks::input_key::Game<'_>::native_input_key"
-helper = "src/key.rs"
-bindings = [
-    { name = "game", ty = "&crate::game::Game<'_>", value = "&*self" },
-    { name = "key", ty = "&str", value = "key" },
-    { name = "action", ty = "mod_api::KeyAction", value = "action" },
-]
-
-[[native.mixin]]
-id = "turn-hook"
-kind = "HEAD"
-target = "horizon_client::game::perspective::Game<'_>::turn_player"
-helper = "src/turn.rs"
-bindings = [
-    { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
-    { name = "xo", ty = "f64", value = "xo" },
-    { name = "yo", ty = "f64", value = "yo" },
-]
