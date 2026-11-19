@@ -4,6 +4,7 @@
 - **Mod Name**: `camera-utils`
 - **Target Platform**: Horizon Minecraft (Rust 2024 / rust-version 1.95)
 - **Target Horizon Revision**: `ba6344a59cb9e755b730dcf02285fc0d33b97d3c` (Nightly 2026-10-30 / 26.3)
+- **Launcher Version**: Horizon Launcher 0.2.78+ (Unified Package Manifest `horizon-mod.toml`, mandatory `horizon-mod-api` path dependency in `Cargo.toml`)
 - **Injection Framework**: `horizon-mixins` (0.6.0, schema 6)
 - **Core Features**:
   1. **Freecam**: ปลดล็อกตำแหน่งกล้องออกจากตัวละคร ควบคุมทิศทางและมุมมองกล้องได้อย่างอิสระโดยไม่ส่ง movement packet ไปยัง server
