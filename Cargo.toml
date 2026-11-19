@@ -8,7 +8,3 @@ description = "Camera utilities mod (Freecam, Freelock, Zoom) for native Horizon
 
 [lib]
 path = "src/lib.rs"
-
-[workspace]
-members = ["tools/audit"]
-resolver = "2"
