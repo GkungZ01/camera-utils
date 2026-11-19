@@ -8,3 +8,6 @@ description = "Camera utilities mod (Freecam, Freelock, Zoom) for native Horizon
 
 [lib]
 path = "src/lib.rs"
+
+[dependencies]
+horizon-mod-api = { path = ".horizon/sdk/api/crates/horizon-mod-api" }
