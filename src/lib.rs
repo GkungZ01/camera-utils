@@ -59,11 +59,11 @@ impl CameraState {
         current_pitch: f32,
     ) {
         match key {
-            "key.keyboard.c" => {
+            "key.keyboard.c" | "zoom" => {
                 self.is_zoomed = pressed;
                 ZOOM_PRESSED.store(pressed, Ordering::Relaxed);
             }
-            "key.keyboard.x" if pressed => {
+            "key.keyboard.x" | "freelock" if pressed => {
                 self.is_freelock = !self.is_freelock;
                 if self.is_freelock {
                     self.freelock_yaw = current_yaw;
@@ -71,7 +71,7 @@ impl CameraState {
                 }
                 FREELOCK_ACTIVE.store(self.is_freelock, Ordering::Relaxed);
             }
-            "key.keyboard.u" if pressed => {
+            "key.keyboard.u" | "freecam" if pressed => {
                 self.is_freecam = !self.is_freecam;
                 if self.is_freecam {
                     self.freecam_pos = current_pos;
@@ -140,8 +140,75 @@ pub fn get_zoom_descriptor() -> Option<ZoomDescriptor> {
 #[cfg(not(test))]
 #[mod_api::horizon_mod]
 impl mod_api::Hooks for CameraUtilsMod {
-    fn zoom(&self, _host: &dyn mod_api::ClientHost, _event: &mut mod_api::ZoomEvent) -> Option<mod_api::Zoom> {
-        if ZOOM_PRESSED.load(Ordering::Relaxed) {
+    fn register(&self, r: &mut dyn mod_api::Registrar, _: &mod_api::RegistrationContext) {
+        r.register_key_mapping(
+            mod_api::KeyRegistration::new("zoom", "key.keyboard.c")
+                .label("key.camera_utils.zoom")
+                .context(mod_api::KeyConflictContext::InGame),
+        );
+        r.register_key_mapping(
+            mod_api::KeyRegistration::new("freelock", "key.keyboard.x")
+                .label("key.camera_utils.freelock")
+                .context(mod_api::KeyConflictContext::InGame),
+        );
+        r.register_key_mapping(
+            mod_api::KeyRegistration::new("freecam", "key.keyboard.u")
+                .label("key.camera_utils.freecam")
+                .context(mod_api::KeyConflictContext::InGame),
+        );
+    }
+
+    fn client_tick_post(&self, host: &mut dyn mod_api::ClientHost, _: &mut mod_api::ClientTickPostEvent) {
+        if !host.playing() {
+            return;
+        }
+
+        // Poll registered key state
+        let zoom_down = host.is_down("camera_utils", "zoom");
+        ZOOM_PRESSED.store(zoom_down, Ordering::Relaxed);
+
+        let cam = host.camera();
+        let pos = cam.as_ref().map_or([0.0; 3], |c| c.position);
+        let yaw = cam.as_ref().map_or(0.0, |c| c.yaw);
+        let pitch = cam.as_ref().map_or(0.0, |c| c.pitch);
+
+        let freelock_clicked = host.consume_click("camera_utils", "freelock");
+        let freecam_clicked = host.consume_click("camera_utils", "freecam");
+
+        if freelock_clicked || freecam_clicked {
+            if let Ok(mut state) = GLOBAL_CAMERA.lock() {
+                if freelock_clicked {
+                    state.handle_key("freelock", true, pos, yaw, pitch);
+                }
+                if freecam_clicked {
+                    state.handle_key("freecam", true, pos, yaw, pitch);
+                }
+            }
+        }
+    }
+
+    fn input_key(&self, host: &mut dyn mod_api::ClientHost, event: &mut mod_api::InputKeyEvent) {
+        let pressed = match event.action {
+            mod_api::KeyAction::Press => true,
+            mod_api::KeyAction::Release => false,
+            _ => return,
+        };
+
+        let cam = host.camera();
+        let pos = cam.as_ref().map_or([0.0; 3], |c| c.position);
+        let yaw = cam.as_ref().map_or(0.0, |c| c.yaw);
+        let pitch = cam.as_ref().map_or(0.0, |c| c.pitch);
+
+        if let Ok(mut state) = GLOBAL_CAMERA.lock() {
+            state.handle_key(event.key, pressed, pos, yaw, pitch);
+            if let Some(layout) = event.layout_key {
+                state.handle_key(layout, pressed, pos, yaw, pitch);
+            }
+        }
+    }
+
+    fn zoom(&self, host: &dyn mod_api::ClientHost, _event: &mut mod_api::ZoomEvent) -> Option<mod_api::Zoom> {
+        if host.is_down("camera_utils", "zoom") || ZOOM_PRESSED.load(Ordering::Relaxed) {
             Some(mod_api::Zoom {
                 factor: 4.0,
                 smooth: true,
@@ -149,6 +216,31 @@ impl mod_api::Hooks for CameraUtilsMod {
             })
         } else {
             None
+        }
+    }
+
+    fn camera_pose(&self, _host: &dyn mod_api::ClientHost, event: &mut mod_api::CameraPoseEvent) {
+        let freelock = FREELOCK_ACTIVE.load(Ordering::Relaxed);
+        let freecam = FREECAM_ACTIVE.load(Ordering::Relaxed);
+
+        if freelock || freecam {
+            if let Ok(state) = GLOBAL_CAMERA.lock() {
+                let (new_pos, new_yaw, new_pitch) =
+                    state.override_camera_view(*event.position, event.yaw, event.pitch);
+                *event.position = new_pos;
+                event.yaw = new_yaw;
+                event.pitch = new_pitch;
+            }
+        }
+    }
+
+    fn calculate_player_turn(&self, _host: &dyn mod_api::ClientHost, event: &mut mod_api::CalculatePlayerTurnEvent) {
+        let freelock = FREELOCK_ACTIVE.load(Ordering::Relaxed);
+        let freecam = FREECAM_ACTIVE.load(Ordering::Relaxed);
+
+        if freelock || freecam {
+            // Decouple body turning when looking around freely
+            event.mouse_sensitivity = 0.0;
         }
     }
 }
