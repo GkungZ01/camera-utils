@@ -22,7 +22,35 @@ pub struct ZoomDescriptor {
     pub turn: f32,
 }
 
-pub static CONFIG: Mutex<Option<CameraConfig>> = Mutex::new(None);
+pub static CONFIG: Mutex<CameraConfig> = Mutex::new(CameraConfig {
+    zoom: config::ZoomSettings {
+        initial_zoom: 4.0,
+        zoom_in_time: 1.0,
+        zoom_out_time: 0.5,
+        zoom_in_transition: config::TransitionType::EaseOutExponential,
+        zoom_out_transition: config::TransitionType::EaseOutExponential,
+        turn_multiplier: 0.25,
+        enable_scroll_zoom: true,
+        zoom_per_step: 1.5,
+        scroll_step_count: 10,
+        scroll_smoothness: 0.7,
+    },
+    freecam: config::FreecamSettings {
+        flight_speed: 0.5,
+        fast_modifier: 2.5,
+        slow_modifier: 0.2,
+        smooth_camera: true,
+        inertia: 0.8,
+        show_player_model: true,
+        freeze_player_movement: true,
+    },
+    freelock: config::FreelockSettings {
+        toggle_mode: true,
+        return_speed: 1.0,
+        sensitivity_ratio: 1.0,
+        perspective_lock: false,
+    },
+});
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct CameraState {
@@ -117,10 +145,15 @@ pub static GLOBAL_CAMERA: Mutex<CameraState> = Mutex::new(CameraState {
 
 pub fn get_zoom_descriptor() -> Option<ZoomDescriptor> {
     if ZOOM_PRESSED.load(Ordering::Relaxed) {
+        let (factor, turn) = if let Ok(cfg) = CONFIG.lock() {
+            (cfg.zoom.initial_zoom, cfg.zoom.turn_multiplier)
+        } else {
+            (4.0, 0.25)
+        };
         Some(ZoomDescriptor {
-            factor: 4.0,
+            factor,
             smooth: true,
-            turn: 0.25,
+            turn,
         })
     } else {
         None
@@ -132,6 +165,7 @@ pub fn get_zoom_descriptor() -> Option<ZoomDescriptor> {
 #[mod_api::horizon_mod]
 impl mod_api::Hooks for CameraUtilsMod {
     fn register(&self, r: &mut dyn mod_api::Registrar, _: &mod_api::RegistrationContext) {
+        // Key Mappings
         r.register_key_mapping(
             mod_api::KeyRegistration::new("zoom", "key.keyboard.c")
                 .label("key.camera_utils.zoom")
@@ -146,6 +180,78 @@ impl mod_api::Hooks for CameraUtilsMod {
             mod_api::KeyRegistration::new("freecam", "key.keyboard.u")
                 .label("key.camera_utils.freecam")
                 .context(mod_api::KeyConflictContext::InGame),
+        );
+
+        // Native Settings (options > mods > camera-utils config)
+        let _ = r.register_setting(
+            mod_api::SettingSpec::range(
+                "zoom_divisor",
+                "setting.camera_utils.zoom_divisor",
+                1.0,
+                20.0,
+                0.5,
+                4.0,
+            )
+            .tooltip("setting.camera_utils.zoom_divisor.tooltip"),
+        );
+        let _ = r.register_setting(
+            mod_api::SettingSpec::toggle(
+                "scroll_zoom",
+                "setting.camera_utils.scroll_zoom",
+                true,
+            )
+            .tooltip("setting.camera_utils.scroll_zoom.tooltip"),
+        );
+        let _ = r.register_setting(
+            mod_api::SettingSpec::range(
+                "turn_multiplier",
+                "setting.camera_utils.turn_multiplier",
+                0.05,
+                1.0,
+                0.05,
+                0.25,
+            )
+            .tooltip("setting.camera_utils.turn_multiplier.tooltip"),
+        );
+
+        let _ = r.register_setting(
+            mod_api::SettingSpec::range(
+                "freecam_speed",
+                "setting.camera_utils.freecam_speed",
+                0.1,
+                5.0,
+                0.1,
+                0.5,
+            )
+            .tooltip("setting.camera_utils.freecam_speed.tooltip"),
+        );
+        let _ = r.register_setting(
+            mod_api::SettingSpec::toggle(
+                "freeze_player",
+                "setting.camera_utils.freeze_player",
+                true,
+            )
+            .tooltip("setting.camera_utils.freeze_player.tooltip"),
+        );
+
+        let _ = r.register_setting(
+            mod_api::SettingSpec::toggle(
+                "toggle_mode",
+                "setting.camera_utils.toggle_mode",
+                true,
+            )
+            .tooltip("setting.camera_utils.toggle_mode.tooltip"),
+        );
+        let _ = r.register_setting(
+            mod_api::SettingSpec::range(
+                "return_speed",
+                "setting.camera_utils.return_speed",
+                0.1,
+                2.0,
+                0.1,
+                1.0,
+            )
+            .tooltip("setting.camera_utils.return_speed.tooltip"),
         );
     }
 
@@ -200,13 +306,61 @@ impl mod_api::Hooks for CameraUtilsMod {
 
     fn zoom(&self, host: &dyn mod_api::ClientHost, _event: &mut mod_api::ZoomEvent) -> Option<mod_api::Zoom> {
         if host.is_down("camera_utils", "zoom") || ZOOM_PRESSED.load(Ordering::Relaxed) {
+            let (factor, turn) = if let Ok(cfg) = CONFIG.lock() {
+                (cfg.zoom.initial_zoom, cfg.zoom.turn_multiplier)
+            } else {
+                (4.0, 0.25)
+            };
             Some(mod_api::Zoom {
-                factor: 4.0,
+                factor,
                 smooth: true,
-                turn: 0.25,
+                turn,
             })
         } else {
             None
+        }
+    }
+
+    fn setting_changed(&self, host: &mut dyn mod_api::ClientHost, event: &mut mod_api::SettingChangedEvent<'_>) {
+        if let Ok(mut cfg) = CONFIG.lock() {
+            match event.key {
+                "zoom_divisor" => {
+                    if let Some(val) = host.setting_f64("zoom_divisor") {
+                        cfg.zoom.initial_zoom = val as f32;
+                    }
+                }
+                "scroll_zoom" => {
+                    if let Some(val) = host.setting_bool("scroll_zoom") {
+                        cfg.zoom.enable_scroll_zoom = val;
+                    }
+                }
+                "turn_multiplier" => {
+                    if let Some(val) = host.setting_f64("turn_multiplier") {
+                        cfg.zoom.turn_multiplier = val as f32;
+                    }
+                }
+                "freecam_speed" => {
+                    if let Some(val) = host.setting_f64("freecam_speed") {
+                        cfg.freecam.flight_speed = val;
+                    }
+                }
+                "freeze_player" => {
+                    if let Some(val) = host.setting_bool("freeze_player") {
+                        cfg.freecam.freeze_player_movement = val;
+                    }
+                }
+                "toggle_mode" => {
+                    if let Some(val) = host.setting_bool("toggle_mode") {
+                        cfg.freelock.toggle_mode = val;
+                    }
+                }
+                "return_speed" => {
+                    if let Some(val) = host.setting_f64("return_speed") {
+                        cfg.freelock.return_speed = val as f32;
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
@@ -282,7 +436,7 @@ mod tests {
 
     #[test]
     fn test_config_and_gui() {
-        let mut cfg = CameraConfig::default();
+        let cfg = CameraConfig::default();
         assert_eq!(cfg.zoom.initial_zoom, 4.0);
         assert_eq!(cfg.freecam.flight_speed, 0.5);
         assert_eq!(cfg.freelock.return_speed, 1.0);
