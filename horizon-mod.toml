@@ -1,0 +1,13 @@
+id = "camera_utils"
+name = "Camera Utils"
+version = "0.1.0"
+description = "Camera utilities mod (Freecam, Freelock, Zoom) for Horizon"
+authors = ["GkungZ01"]
+license = "MIT"
+api = "0.2"
+side = "client"
+capabilities = ["registries"]
+
+[native]
+game = "26.3"
+horizon = "f00125f61f794aaa3d4e950d301f353b35b6ee3d"
