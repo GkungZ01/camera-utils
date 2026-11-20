@@ -1,4 +1,10 @@
 // Camera utilities implementation for Horizon (Freecam, Freelock, Zoom)
+pub mod config;
+pub mod gui;
+
+pub use config::CameraConfig;
+pub use gui::ConfigScreen;
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
@@ -16,22 +22,7 @@ pub struct ZoomDescriptor {
     pub turn: f32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct CameraConfig {
-    pub zoom_fov_multiplier: f32,
-    pub zoom_turn_multiplier: f32,
-    pub freecam_speed: f64,
-}
-
-impl Default for CameraConfig {
-    fn default() -> Self {
-        Self {
-            zoom_fov_multiplier: 4.0,
-            zoom_turn_multiplier: 0.25,
-            freecam_speed: 0.5,
-        }
-    }
-}
+pub static CONFIG: Mutex<Option<CameraConfig>> = Mutex::new(None);
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct CameraState {
@@ -287,5 +278,31 @@ mod tests {
         assert_eq!(pos, [10.0, 20.0, 30.0]);
         assert_eq!(yaw, 45.0);
         assert_eq!(pitch, 15.0);
+    }
+
+    #[test]
+    fn test_config_and_gui() {
+        let mut cfg = CameraConfig::default();
+        assert_eq!(cfg.zoom.initial_zoom, 4.0);
+        assert_eq!(cfg.freecam.flight_speed, 0.5);
+        assert_eq!(cfg.freelock.return_speed, 1.0);
+
+        let mut screen = ConfigScreen::new(cfg);
+        assert_eq!(screen.active_category, gui::ConfigCategory::Zoom);
+        screen.switch_category(gui::ConfigCategory::Freecam);
+        assert_eq!(screen.active_category, gui::ConfigCategory::Freecam);
+
+        // Test slider widget logic
+        let mut slider = gui::SliderWidget::new("Test", 1.0, 10.0, 0.5, "x", 4.0);
+        assert_eq!(slider.normalized(), (4.0 - 1.0) / 9.0);
+        slider.set_normalized(1.0);
+        assert_eq!(slider.value, 10.0);
+        slider.reset();
+        assert_eq!(slider.value, 4.0);
+
+        // Test transition easing
+        use config::TransitionType;
+        assert_eq!(TransitionType::Linear.apply(0.5), 0.5);
+        assert!(TransitionType::EaseOutExponential.apply(0.5) > 0.5);
     }
 }
