@@ -2,10 +2,7 @@
 """Export pinned sources, apply the template bundle and build a native Horizon."""
 import argparse
 import contextlib
-try:
-    import fcntl
-except ImportError:
-    fcntl = None
+import fcntl
 import hashlib
 import json
 import os
@@ -99,8 +96,7 @@ def mixin_stage(horizon, stages):
 def lock(path):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as handle:
-        if fcntl is not None:
-            fcntl.flock(handle, fcntl.LOCK_EX)
+        fcntl.flock(handle, fcntl.LOCK_EX)
         yield
 
 
