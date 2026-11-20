@@ -2,6 +2,9 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
+#[derive(Default)]
+pub struct CameraUtilsMod;
+
 pub static ZOOM_PRESSED: AtomicBool = AtomicBool::new(false);
 pub static FREELOCK_ACTIVE: AtomicBool = AtomicBool::new(false);
 pub static FREECAM_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -130,6 +133,23 @@ pub fn get_zoom_descriptor() -> Option<ZoomDescriptor> {
         })
     } else {
         None
+    }
+}
+
+// Horizon Native Mod Hooks Implementation
+#[cfg(not(test))]
+#[mod_api::horizon_mod]
+impl mod_api::Hooks for CameraUtilsMod {
+    fn zoom(&self, _host: &dyn mod_api::ClientHost, _event: &mut mod_api::ZoomEvent) -> Option<mod_api::Zoom> {
+        if ZOOM_PRESSED.load(Ordering::Relaxed) {
+            Some(mod_api::Zoom {
+                factor: 4.0,
+                smooth: true,
+                turn: 0.25,
+            })
+        } else {
+            None
+        }
     }
 }
 
