@@ -482,19 +482,24 @@ impl mod_api::Hooks for CameraUtilsMod {
 
         let wheel_delta = event.scroll[1];
         if wheel_delta != 0.0 {
+            let (initial_zoom, zoom_per_step) = if let Ok(cfg) = CONFIG.lock() {
+                (cfg.zoom.initial_zoom, cfg.zoom.zoom_per_step)
+            } else {
+                (4.0, 1.5)
+            };
+
             if let Ok(mut runtime) = ZOOM_RUNTIME.lock() {
                 runtime.is_active = true;
                 if wheel_delta > 0.0 {
                     runtime.current_step = (runtime.current_step + 1).min(step_count);
                 } else {
-                    runtime.current_step = (runtime.current_step - 1).max(-step_count);
+                    // Prevent decreasing step further if factor is already <= 1.0
+                    let current_factor = initial_zoom * zoom_per_step.powi(runtime.current_step);
+                    if current_factor > 1.0 {
+                        runtime.current_step = (runtime.current_step - 1).max(-step_count);
+                    }
                 }
 
-                let (initial_zoom, zoom_per_step) = if let Ok(cfg) = CONFIG.lock() {
-                    (cfg.zoom.initial_zoom, cfg.zoom.zoom_per_step)
-                } else {
-                    (4.0, 1.5)
-                };
                 let factor = (initial_zoom * zoom_per_step.powi(runtime.current_step)).clamp(1.0, 50.0);
                 println!("[CameraUtils] Zoom Scroll: delta={wheel_delta:.1}, step={}, factor={factor:.2}x", runtime.current_step);
             }
@@ -544,8 +549,13 @@ impl mod_api::Hooks for CameraUtilsMod {
         let factor = (initial_zoom * zoom_per_step.powi(step)).clamp(1.0, 50.0);
 
         // Relative sensitivity: inversely proportional to factor, scaled by relative_sens %
-        let base_turn = 1.0 / factor;
-        let turn = (base_turn * (relative_sens / 100.0)).clamp(0.01, 2.0);
+        // If factor <= 1.0, keep full sensitivity (1.0) so camera movement is never restricted
+        let turn = if factor <= 1.001 {
+            1.0
+        } else {
+            let base_turn = 1.0 / factor;
+            (base_turn * (relative_sens / 100.0)).clamp(0.01, 2.0)
+        };
 
         Some(mod_api::Zoom {
             factor,
@@ -702,10 +712,34 @@ mod tests {
         let factor_step1 = (initial_zoom * zoom_per_step.powi(runtime.current_step)).clamp(1.0, 50.0);
         assert!((factor_step1 - 6.0).abs() < 1e-4);
 
-        // Scroll out (step - 2 => -1)
-        runtime.current_step = (runtime.current_step - 2).max(-step_count);
-        let factor_step_minus1 = (initial_zoom * zoom_per_step.powi(runtime.current_step)).clamp(1.0, 50.0);
-        assert!((factor_step_minus1 - (4.0 / 1.5)).abs() < 1e-4);
+        // Scroll back to 0 -> should recover exact initial zoom
+        runtime.current_step = (runtime.current_step - 1).max(-step_count);
+        let factor_step0 = (initial_zoom * zoom_per_step.powi(runtime.current_step)).clamp(1.0, 50.0);
+        assert_eq!(runtime.current_step, 0);
+        assert!((factor_step0 - 4.0).abs() < 1e-4);
+
+        // Scroll down until factor reaches 1.0x (should stop at step where factor > 1.0)
+        for _ in 0..20 {
+            let current_factor = initial_zoom * zoom_per_step.powi(runtime.current_step);
+            if current_factor > 1.0 {
+                runtime.current_step = (runtime.current_step - 1).max(-step_count);
+            }
+        }
+        // At initial=4.0 and per_step=1.5:
+        // step -1: 2.67
+        // step -2: 1.78
+        // step -3: 1.19
+        // step -4: 0.79 (current_factor at step -3 was > 1.0, so it decreased to -4, where factor is clamped to 1.0)
+        // Next attempts won't decrease step further because current_factor (4.0 * 1.5^-4 = 0.79) is not > 1.0.
+        assert_eq!(runtime.current_step, -4);
+        let clamped_factor = (initial_zoom * zoom_per_step.powi(runtime.current_step)).clamp(1.0, 50.0);
+        assert!((clamped_factor - 1.0).abs() < 1e-4);
+
+        // Scroll back up 1 step: immediately restores step -3 (1.185x) with NO dead scrolls
+        runtime.current_step = (runtime.current_step + 1).min(step_count);
+        assert_eq!(runtime.current_step, -3);
+        let factor_back_up = (initial_zoom * zoom_per_step.powi(runtime.current_step)).clamp(1.0, 50.0);
+        assert!((factor_back_up - (4.0 / 1.5f32.powi(3))).abs() < 1e-4);
     }
 
     #[test]
