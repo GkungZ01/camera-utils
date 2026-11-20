@@ -1,0 +1,26 @@
+{
+  "key.camera_utils.zoom": "Zoom",
+  "key.camera_utils.freelock": "Freelock",
+  "key.camera_utils.freecam": "Freecam",
+
+  "setting.camera_utils.zoom_divisor": "Zoom Factor",
+  "setting.camera_utils.zoom_divisor.tooltip": "Magnification level when holding zoom key",
+
+  "setting.camera_utils.scroll_zoom": "Scroll Zoom",
+  "setting.camera_utils.scroll_zoom.tooltip": "Allow zooming in and out with mouse wheel while zooming",
+
+  "setting.camera_utils.turn_multiplier": "Turn Sensitivity",
+  "setting.camera_utils.turn_multiplier.tooltip": "Mouse sensitivity multiplier while zoomed in",
+
+  "setting.camera_utils.freecam_speed": "Freecam Speed",
+  "setting.camera_utils.freecam_speed.tooltip": "Flight speed of the detached freecam",
+
+  "setting.camera_utils.freeze_player": "Freeze Player",
+  "setting.camera_utils.freeze_player.tooltip": "Prevent player body movements while in freecam",
+
+  "setting.camera_utils.toggle_mode": "Freelock Toggle Mode",
+  "setting.camera_utils.toggle_mode.tooltip": "Toggle Freelock on/off instead of holding key",
+
+  "setting.camera_utils.return_speed": "Freelock Return Speed",
+  "setting.camera_utils.return_speed.tooltip": "Speed of camera transition back to original angle"
+}
