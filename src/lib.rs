@@ -393,7 +393,7 @@ impl mod_api::Hooks for CameraUtilsMod {
                             (4.0, 1.5)
                         };
                         let step = if let Ok(runtime) = ZOOM_RUNTIME.lock() { runtime.current_step } else { 0 };
-                        let factor = (initial_zoom * zoom_per_step.powi(step)).clamp(1.0, 50.0);
+                        let factor = (initial_zoom * zoom_per_step.powi(step)).max(1.0);
                         println!("[CameraUtils] Zoom Toggled ON: factor={factor:.2}x (step={step}, remember={remember})");
                     } else {
                         println!("[CameraUtils] Zoom Toggled OFF");
@@ -500,7 +500,7 @@ impl mod_api::Hooks for CameraUtilsMod {
                     }
                 }
 
-                let factor = (initial_zoom * zoom_per_step.powi(runtime.current_step)).clamp(1.0, 50.0);
+                let factor = (initial_zoom * zoom_per_step.powi(runtime.current_step)).max(1.0);
                 println!("[CameraUtils] Zoom Scroll: delta={wheel_delta:.1}, step={}, factor={factor:.2}x", runtime.current_step);
             }
             return mod_api::Flow::Cancel;
@@ -546,7 +546,7 @@ impl mod_api::Hooks for CameraUtilsMod {
         };
 
         // Calculate final magnification factor: initial_zoom * (zoom_per_step ^ step)
-        let factor = (initial_zoom * zoom_per_step.powi(step)).clamp(1.0, 50.0);
+        let factor = (initial_zoom * zoom_per_step.powi(step)).max(1.0);
 
         // Relative sensitivity: inversely proportional to factor, scaled by relative_sens %
         // If factor <= 1.0, keep full sensitivity (1.0) so camera movement is never restricted
@@ -709,12 +709,12 @@ mod tests {
 
         // Scroll in (step + 1)
         runtime.current_step = (runtime.current_step + 1).min(step_count);
-        let factor_step1 = (initial_zoom * zoom_per_step.powi(runtime.current_step)).clamp(1.0, 50.0);
+        let factor_step1 = (initial_zoom * zoom_per_step.powi(runtime.current_step)).max(1.0);
         assert!((factor_step1 - 6.0).abs() < 1e-4);
 
         // Scroll back to 0 -> should recover exact initial zoom
         runtime.current_step = (runtime.current_step - 1).max(-step_count);
-        let factor_step0 = (initial_zoom * zoom_per_step.powi(runtime.current_step)).clamp(1.0, 50.0);
+        let factor_step0 = (initial_zoom * zoom_per_step.powi(runtime.current_step)).max(1.0);
         assert_eq!(runtime.current_step, 0);
         assert!((factor_step0 - 4.0).abs() < 1e-4);
 
@@ -725,21 +725,22 @@ mod tests {
                 runtime.current_step = (runtime.current_step - 1).max(-step_count);
             }
         }
-        // At initial=4.0 and per_step=1.5:
-        // step -1: 2.67
-        // step -2: 1.78
-        // step -3: 1.19
-        // step -4: 0.79 (current_factor at step -3 was > 1.0, so it decreased to -4, where factor is clamped to 1.0)
-        // Next attempts won't decrease step further because current_factor (4.0 * 1.5^-4 = 0.79) is not > 1.0.
         assert_eq!(runtime.current_step, -4);
-        let clamped_factor = (initial_zoom * zoom_per_step.powi(runtime.current_step)).clamp(1.0, 50.0);
+        let clamped_factor = (initial_zoom * zoom_per_step.powi(runtime.current_step)).max(1.0);
         assert!((clamped_factor - 1.0).abs() < 1e-4);
 
         // Scroll back up 1 step: immediately restores step -3 (1.185x) with NO dead scrolls
         runtime.current_step = (runtime.current_step + 1).min(step_count);
         assert_eq!(runtime.current_step, -3);
-        let factor_back_up = (initial_zoom * zoom_per_step.powi(runtime.current_step)).clamp(1.0, 50.0);
+        let factor_back_up = (initial_zoom * zoom_per_step.powi(runtime.current_step)).max(1.0);
         assert!((factor_back_up - (4.0 / 1.5f32.powi(3))).abs() < 1e-4);
+
+        // Scroll up to max step 10 -> factor must not be capped at 50.0x
+        runtime.current_step = step_count;
+        let factor_step10 = (initial_zoom * zoom_per_step.powi(runtime.current_step)).max(1.0);
+        let expected_step10 = 4.0 * 1.5f32.powi(10);
+        assert!((factor_step10 - expected_step10).abs() < 1e-3);
+        assert!(factor_step10 > 200.0);
     }
 
     #[test]
