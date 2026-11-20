@@ -183,75 +183,76 @@ impl mod_api::Hooks for CameraUtilsMod {
         );
 
         // Native Settings (options > mods > camera-utils config)
+        // Labeled with clear category prefixes for instant readable categorization
         let _ = r.register_setting(
             mod_api::SettingSpec::range(
                 "zoom_divisor",
-                "setting.camera_utils.zoom_divisor",
+                "[Zoom] Initial Zoom",
                 1.0,
                 20.0,
                 0.5,
                 4.0,
             )
-            .tooltip("setting.camera_utils.zoom_divisor.tooltip"),
+            .tooltip("Magnification factor when zooming (e.g. 4.0 = 4x zoom)"),
         );
         let _ = r.register_setting(
             mod_api::SettingSpec::toggle(
                 "scroll_zoom",
-                "setting.camera_utils.scroll_zoom",
+                "[Zoom] Scroll Zoom",
                 true,
             )
-            .tooltip("setting.camera_utils.scroll_zoom.tooltip"),
+            .tooltip("Allow mouse wheel scrolling to adjust zoom level"),
         );
         let _ = r.register_setting(
             mod_api::SettingSpec::range(
                 "turn_multiplier",
-                "setting.camera_utils.turn_multiplier",
+                "[Zoom] Turn Sensitivity",
                 0.05,
                 1.0,
                 0.05,
                 0.25,
             )
-            .tooltip("setting.camera_utils.turn_multiplier.tooltip"),
+            .tooltip("Mouse turning sensitivity multiplier while zoomed in"),
         );
 
         let _ = r.register_setting(
             mod_api::SettingSpec::range(
                 "freecam_speed",
-                "setting.camera_utils.freecam_speed",
+                "[Freecam] Flight Speed",
                 0.1,
                 5.0,
                 0.1,
                 0.5,
             )
-            .tooltip("setting.camera_utils.freecam_speed.tooltip"),
+            .tooltip("Detached camera flight speed"),
         );
         let _ = r.register_setting(
             mod_api::SettingSpec::toggle(
                 "freeze_player",
-                "setting.camera_utils.freeze_player",
+                "[Freecam] Freeze Player Movement",
                 true,
             )
-            .tooltip("setting.camera_utils.freeze_player.tooltip"),
+            .tooltip("Prevent player character from moving while in Freecam"),
         );
 
         let _ = r.register_setting(
             mod_api::SettingSpec::toggle(
                 "toggle_mode",
-                "setting.camera_utils.toggle_mode",
+                "[Freelock] Toggle Mode",
                 true,
             )
-            .tooltip("setting.camera_utils.toggle_mode.tooltip"),
+            .tooltip("Press to toggle Freelock instead of holding key"),
         );
         let _ = r.register_setting(
             mod_api::SettingSpec::range(
                 "return_speed",
-                "setting.camera_utils.return_speed",
+                "[Freelock] Return Speed",
                 0.1,
                 2.0,
                 0.1,
                 1.0,
             )
-            .tooltip("setting.camera_utils.return_speed.tooltip"),
+            .tooltip("Speed of camera return transition when exiting Freelock"),
         );
     }
 

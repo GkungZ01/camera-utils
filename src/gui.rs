@@ -18,7 +18,7 @@ impl ConfigCategory {
 
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Zoom => "Zoom",
+            Self::Zoom => "Behavior (Zoom)",
             Self::Freecam => "Freecam",
             Self::Freelock => "Freelock",
         }
