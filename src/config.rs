@@ -46,18 +46,39 @@ impl TransitionType {
     }
 }
 
+/// Key behavior mode: Hold (default) or Toggle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeyBehavior {
+    #[default]
+    Hold,
+    Toggle,
+}
+
+impl KeyBehavior {
+    pub const ALL: [KeyBehavior; 2] = [KeyBehavior::Hold, KeyBehavior::Toggle];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Hold => "Hold",
+            Self::Toggle => "Toggle",
+        }
+    }
+}
+
 /// Zoom category settings (inspired by Zoomify).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ZoomSettings {
     pub initial_zoom: f32,
+    pub enable_scroll_zoom: bool,
+    pub scroll_step_count: u32,
+    pub zoom_per_step: f32,
+    pub remember_zoom_steps: bool,
+    pub key_behavior: KeyBehavior,
+    pub relative_sensitivity: f32,
     pub zoom_in_time: f32,
     pub zoom_out_time: f32,
     pub zoom_in_transition: TransitionType,
     pub zoom_out_transition: TransitionType,
-    pub turn_multiplier: f32,
-    pub enable_scroll_zoom: bool,
-    pub zoom_per_step: f32,
-    pub scroll_step_count: u32,
     pub scroll_smoothness: f32,
 }
 
@@ -65,14 +86,16 @@ impl Default for ZoomSettings {
     fn default() -> Self {
         Self {
             initial_zoom: 4.0,
+            enable_scroll_zoom: true,
+            scroll_step_count: 10,
+            zoom_per_step: 1.5,
+            remember_zoom_steps: false,
+            key_behavior: KeyBehavior::Hold,
+            relative_sensitivity: 100.0,
             zoom_in_time: 1.0,
             zoom_out_time: 0.5,
             zoom_in_transition: TransitionType::EaseOutExponential,
             zoom_out_transition: TransitionType::EaseOutExponential,
-            turn_multiplier: 0.25,
-            enable_scroll_zoom: true,
-            zoom_per_step: 1.5,
-            scroll_step_count: 10,
             scroll_smoothness: 0.7,
         }
     }

@@ -12,8 +12,29 @@ use std::sync::Mutex;
 pub struct CameraUtilsMod;
 
 pub static ZOOM_PRESSED: AtomicBool = AtomicBool::new(false);
+pub static ZOOM_TOGGLED: AtomicBool = AtomicBool::new(false);
 pub static FREELOCK_ACTIVE: AtomicBool = AtomicBool::new(false);
 pub static FREECAM_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ZoomRuntime {
+    pub current_step: i32,
+    pub is_active: bool,
+}
+
+impl Default for ZoomRuntime {
+    fn default() -> Self {
+        Self {
+            current_step: 0,
+            is_active: false,
+        }
+    }
+}
+
+pub static ZOOM_RUNTIME: Mutex<ZoomRuntime> = Mutex::new(ZoomRuntime {
+    current_step: 0,
+    is_active: false,
+});
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ZoomDescriptor {
@@ -25,14 +46,16 @@ pub struct ZoomDescriptor {
 pub static CONFIG: Mutex<CameraConfig> = Mutex::new(CameraConfig {
     zoom: config::ZoomSettings {
         initial_zoom: 4.0,
+        enable_scroll_zoom: true,
+        scroll_step_count: 10,
+        zoom_per_step: 1.5,
+        remember_zoom_steps: false,
+        key_behavior: config::KeyBehavior::Hold,
+        relative_sensitivity: 100.0,
         zoom_in_time: 1.0,
         zoom_out_time: 0.5,
         zoom_in_transition: config::TransitionType::EaseOutExponential,
         zoom_out_transition: config::TransitionType::EaseOutExponential,
-        turn_multiplier: 0.25,
-        enable_scroll_zoom: true,
-        zoom_per_step: 1.5,
-        scroll_step_count: 10,
         scroll_smoothness: 0.7,
     },
     freecam: config::FreecamSettings {
@@ -146,7 +169,9 @@ pub static GLOBAL_CAMERA: Mutex<CameraState> = Mutex::new(CameraState {
 pub fn get_zoom_descriptor() -> Option<ZoomDescriptor> {
     if ZOOM_PRESSED.load(Ordering::Relaxed) {
         let (factor, turn) = if let Ok(cfg) = CONFIG.lock() {
-            (cfg.zoom.initial_zoom, cfg.zoom.turn_multiplier)
+            let f = cfg.zoom.initial_zoom;
+            let t = (1.0 / f) * (cfg.zoom.relative_sensitivity / 100.0);
+            (f, t)
         } else {
             (4.0, 0.25)
         };
@@ -183,38 +208,78 @@ impl mod_api::Hooks for CameraUtilsMod {
         );
 
         // Native Settings (options > mods > camera-utils config)
-        // Labeled with clear category prefixes for instant readable categorization
+        // Zoom Category
         let _ = r.register_setting(
             mod_api::SettingSpec::range(
-                "zoom_divisor",
+                "zoom_initial",
                 "[Zoom] Initial Zoom",
                 1.0,
-                20.0,
+                10.0,
                 0.5,
                 4.0,
             )
-            .tooltip("Magnification factor when zooming (e.g. 4.0 = 4x zoom)"),
+            .tooltip("Magnification factor when zooming (1.0x to 10.0x)"),
         );
         let _ = r.register_setting(
             mod_api::SettingSpec::toggle(
-                "scroll_zoom",
-                "[Zoom] Scroll Zoom",
+                "zoom_scroll_enabled",
+                "[Zoom] Enable Scroll Zoom",
                 true,
             )
             .tooltip("Allow mouse wheel scrolling to adjust zoom level"),
         );
         let _ = r.register_setting(
             mod_api::SettingSpec::range(
-                "turn_multiplier",
-                "[Zoom] Turn Sensitivity",
-                0.05,
+                "zoom_scroll_step_count",
+                "[Zoom] Scroll Step Count",
+                3.0,
+                20.0,
                 1.0,
-                0.05,
-                0.25,
+                10.0,
             )
-            .tooltip("Mouse turning sensitivity multiplier while zoomed in"),
+            .tooltip("Maximum steps you can zoom in or out with the mouse wheel (3 to 20)"),
+        );
+        let _ = r.register_setting(
+            mod_api::SettingSpec::range(
+                "zoom_per_step",
+                "[Zoom] Zoom Per Step",
+                1.1,
+                2.0,
+                0.05,
+                1.5,
+            )
+            .tooltip("Zoom multiplier per wheel step (1.1x to 2.0x)"),
+        );
+        let _ = r.register_setting(
+            mod_api::SettingSpec::toggle(
+                "zoom_remember_steps",
+                "[Zoom] Remember Zoom Steps",
+                false,
+            )
+            .tooltip("Keep current zoom level between zoom activations"),
+        );
+        let _ = r.register_setting(
+            mod_api::SettingSpec::choice(
+                "zoom_key_behavior",
+                "[Zoom] Key Behavior",
+                ["Hold", "Toggle"],
+                0,
+            )
+            .tooltip("Hold key to zoom, or press key to toggle zoom on/off"),
+        );
+        let _ = r.register_setting(
+            mod_api::SettingSpec::range(
+                "zoom_relative_sensitivity",
+                "[Zoom] Relative Sensitivity",
+                0.0,
+                150.0,
+                5.0,
+                100.0,
+            )
+            .tooltip("Mouse sensitivity percentage relative to zoom level (0% to 150%)"),
         );
 
+        // Freecam Category
         let _ = r.register_setting(
             mod_api::SettingSpec::range(
                 "freecam_speed",
@@ -235,6 +300,7 @@ impl mod_api::Hooks for CameraUtilsMod {
             .tooltip("Prevent player character from moving while in Freecam"),
         );
 
+        // Freelock Category
         let _ = r.register_setting(
             mod_api::SettingSpec::toggle(
                 "toggle_mode",
@@ -263,7 +329,46 @@ impl mod_api::Hooks for CameraUtilsMod {
 
         // Poll registered key state
         let zoom_down = host.is_down("camera_utils", "zoom");
-        ZOOM_PRESSED.store(zoom_down, Ordering::Relaxed);
+        let zoom_clicked = host.consume_click("camera_utils", "zoom");
+
+        let key_behavior = if let Ok(cfg) = CONFIG.lock() {
+            cfg.zoom.key_behavior
+        } else {
+            config::KeyBehavior::Hold
+        };
+
+        match key_behavior {
+            config::KeyBehavior::Hold => {
+                ZOOM_PRESSED.store(zoom_down, Ordering::Relaxed);
+                if !zoom_down {
+                    if let Ok(cfg) = CONFIG.lock() {
+                        if !cfg.zoom.remember_zoom_steps {
+                            if let Ok(mut runtime) = ZOOM_RUNTIME.lock() {
+                                runtime.current_step = 0;
+                                runtime.is_active = false;
+                            }
+                        }
+                    }
+                }
+            }
+            config::KeyBehavior::Toggle => {
+                if zoom_clicked {
+                    let prev = ZOOM_TOGGLED.load(Ordering::Relaxed);
+                    let next = !prev;
+                    ZOOM_TOGGLED.store(next, Ordering::Relaxed);
+                    if !next {
+                        if let Ok(cfg) = CONFIG.lock() {
+                            if !cfg.zoom.remember_zoom_steps {
+                                if let Ok(mut runtime) = ZOOM_RUNTIME.lock() {
+                                    runtime.current_step = 0;
+                                    runtime.is_active = false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         let cam = host.camera();
         let pos = cam.as_ref().map_or([0.0; 3], |c| c.position);
@@ -305,13 +410,85 @@ impl mod_api::Hooks for CameraUtilsMod {
         }
     }
 
-    fn zoom(&self, host: &dyn mod_api::ClientHost, _event: &mut mod_api::ZoomEvent) -> Option<mod_api::Zoom> {
-        if host.is_down("camera_utils", "zoom") || ZOOM_PRESSED.load(Ordering::Relaxed) {
-            let (factor, turn) = if let Ok(cfg) = CONFIG.lock() {
-                (cfg.zoom.initial_zoom, cfg.zoom.turn_multiplier)
+    fn mouse_scrolling(&self, host: &mut dyn mod_api::ClientHost, event: &mut mod_api::MouseScrollingEvent) -> mod_api::Flow {
+        if !host.playing() {
+            return mod_api::Flow::Continue;
+        }
+
+        let is_zooming = {
+            let key_behavior = if let Ok(cfg) = CONFIG.lock() {
+                cfg.zoom.key_behavior
             } else {
-                (4.0, 0.25)
+                config::KeyBehavior::Hold
             };
+
+            match key_behavior {
+                config::KeyBehavior::Hold => host.is_down("camera_utils", "zoom") || ZOOM_PRESSED.load(Ordering::Relaxed),
+                config::KeyBehavior::Toggle => ZOOM_TOGGLED.load(Ordering::Relaxed),
+            }
+        };
+
+        if !is_zooming {
+            return mod_api::Flow::Continue;
+        }
+
+        let (enabled, step_count) = if let Ok(cfg) = CONFIG.lock() {
+            (cfg.zoom.enable_scroll_zoom, cfg.zoom.scroll_step_count as i32)
+        } else {
+            (true, 10)
+        };
+
+        if !enabled {
+            return mod_api::Flow::Continue;
+        }
+
+        let wheel_delta = event.scroll[1];
+        if wheel_delta != 0.0 {
+            if let Ok(mut runtime) = ZOOM_RUNTIME.lock() {
+                runtime.is_active = true;
+                if wheel_delta > 0.0 {
+                    runtime.current_step = (runtime.current_step + 1).min(step_count);
+                } else {
+                    runtime.current_step = (runtime.current_step - 1).max(-step_count);
+                }
+            }
+            return mod_api::Flow::Cancel;
+        }
+
+        mod_api::Flow::Continue
+    }
+
+    fn zoom(&self, host: &dyn mod_api::ClientHost, _event: &mut mod_api::ZoomEvent) -> Option<mod_api::Zoom> {
+        let (key_behavior, initial_zoom, zoom_per_step, relative_sens) = if let Ok(cfg) = CONFIG.lock() {
+            (
+                cfg.zoom.key_behavior,
+                cfg.zoom.initial_zoom,
+                cfg.zoom.zoom_per_step,
+                cfg.zoom.relative_sensitivity,
+            )
+        } else {
+            (config::KeyBehavior::Hold, 4.0, 1.5, 100.0)
+        };
+
+        let is_zooming = match key_behavior {
+            config::KeyBehavior::Hold => host.is_down("camera_utils", "zoom") || ZOOM_PRESSED.load(Ordering::Relaxed),
+            config::KeyBehavior::Toggle => ZOOM_TOGGLED.load(Ordering::Relaxed),
+        };
+
+        if is_zooming {
+            let step = if let Ok(runtime) = ZOOM_RUNTIME.lock() {
+                runtime.current_step
+            } else {
+                0
+            };
+
+            // Calculate final magnification factor: initial_zoom * (zoom_per_step ^ step)
+            let factor = (initial_zoom * zoom_per_step.powi(step)).clamp(1.0, 50.0);
+
+            // Relative sensitivity: inversely proportional to factor, scaled by relative_sens %
+            let base_turn = 1.0 / factor;
+            let turn = (base_turn * (relative_sens / 100.0)).clamp(0.01, 2.0);
+
             Some(mod_api::Zoom {
                 factor,
                 smooth: true,
@@ -325,19 +502,42 @@ impl mod_api::Hooks for CameraUtilsMod {
     fn setting_changed(&self, host: &mut dyn mod_api::ClientHost, event: &mut mod_api::SettingChangedEvent<'_>) {
         if let Ok(mut cfg) = CONFIG.lock() {
             match event.key {
-                "zoom_divisor" => {
-                    if let Some(val) = host.setting_f64("zoom_divisor") {
+                "zoom_initial" | "zoom_divisor" => {
+                    if let Some(val) = host.setting_f64("zoom_initial").or_else(|| host.setting_f64("zoom_divisor")) {
                         cfg.zoom.initial_zoom = val as f32;
                     }
                 }
-                "scroll_zoom" => {
-                    if let Some(val) = host.setting_bool("scroll_zoom") {
+                "zoom_scroll_enabled" | "scroll_zoom" => {
+                    if let Some(val) = host.setting_bool("zoom_scroll_enabled").or_else(|| host.setting_bool("scroll_zoom")) {
                         cfg.zoom.enable_scroll_zoom = val;
                     }
                 }
-                "turn_multiplier" => {
-                    if let Some(val) = host.setting_f64("turn_multiplier") {
-                        cfg.zoom.turn_multiplier = val as f32;
+                "zoom_scroll_step_count" => {
+                    if let Some(val) = host.setting_f64("zoom_scroll_step_count") {
+                        cfg.zoom.scroll_step_count = val as u32;
+                    }
+                }
+                "zoom_per_step" => {
+                    if let Some(val) = host.setting_f64("zoom_per_step") {
+                        cfg.zoom.zoom_per_step = val as f32;
+                    }
+                }
+                "zoom_remember_steps" => {
+                    if let Some(val) = host.setting_bool("zoom_remember_steps") {
+                        cfg.zoom.remember_zoom_steps = val;
+                    }
+                }
+                "zoom_key_behavior" => {
+                    if let Some(choice_idx) = host.setting_choice("zoom_key_behavior") {
+                        cfg.zoom.key_behavior = match choice_idx {
+                            1 => config::KeyBehavior::Toggle,
+                            _ => config::KeyBehavior::Hold,
+                        };
+                    }
+                }
+                "zoom_relative_sensitivity" => {
+                    if let Some(val) = host.setting_f64("zoom_relative_sensitivity") {
+                        cfg.zoom.relative_sensitivity = val as f32;
                     }
                 }
                 "freecam_speed" => {
@@ -433,6 +633,24 @@ mod tests {
         assert_eq!(pos, [10.0, 20.0, 30.0]);
         assert_eq!(yaw, 45.0);
         assert_eq!(pitch, 15.0);
+    }
+
+    #[test]
+    fn test_zoom_scroll() {
+        let mut runtime = ZoomRuntime::default();
+        let step_count: i32 = 10;
+        let zoom_per_step: f32 = 1.5;
+        let initial_zoom: f32 = 4.0;
+
+        // Scroll in (step + 1)
+        runtime.current_step = (runtime.current_step + 1).min(step_count);
+        let factor_step1 = (initial_zoom * zoom_per_step.powi(runtime.current_step)).clamp(1.0, 50.0);
+        assert!((factor_step1 - 6.0).abs() < 1e-4);
+
+        // Scroll out (step - 2 => -1)
+        runtime.current_step = (runtime.current_step - 2).max(-step_count);
+        let factor_step_minus1 = (initial_zoom * zoom_per_step.powi(runtime.current_step)).clamp(1.0, 50.0);
+        assert!((factor_step_minus1 - (4.0 / 1.5)).abs() < 1e-4);
     }
 
     #[test]
