@@ -339,8 +339,18 @@ impl mod_api::Hooks for CameraUtilsMod {
 
         match key_behavior {
             config::KeyBehavior::Hold => {
-                ZOOM_PRESSED.store(zoom_down, Ordering::Relaxed);
-                if !zoom_down {
+                let prev_down = ZOOM_PRESSED.swap(zoom_down, Ordering::Relaxed);
+                if zoom_down && !prev_down {
+                    let (initial_zoom, zoom_per_step) = if let Ok(cfg) = CONFIG.lock() {
+                        (cfg.zoom.initial_zoom, cfg.zoom.zoom_per_step)
+                    } else {
+                        (4.0, 1.5)
+                    };
+                    let step = if let Ok(runtime) = ZOOM_RUNTIME.lock() { runtime.current_step } else { 0 };
+                    let factor = (initial_zoom * zoom_per_step.powi(step)).clamp(1.0, 50.0);
+                    println!("[CameraUtils] Zoom Started: factor={factor:.2}x (step={step})");
+                } else if !zoom_down && prev_down {
+                    println!("[CameraUtils] Zoom Ended");
                     if let Ok(cfg) = CONFIG.lock() {
                         if !cfg.zoom.remember_zoom_steps {
                             if let Ok(mut runtime) = ZOOM_RUNTIME.lock() {
@@ -356,7 +366,17 @@ impl mod_api::Hooks for CameraUtilsMod {
                     let prev = ZOOM_TOGGLED.load(Ordering::Relaxed);
                     let next = !prev;
                     ZOOM_TOGGLED.store(next, Ordering::Relaxed);
-                    if !next {
+                    if next {
+                        let (initial_zoom, zoom_per_step) = if let Ok(cfg) = CONFIG.lock() {
+                            (cfg.zoom.initial_zoom, cfg.zoom.zoom_per_step)
+                        } else {
+                            (4.0, 1.5)
+                        };
+                        let step = if let Ok(runtime) = ZOOM_RUNTIME.lock() { runtime.current_step } else { 0 };
+                        let factor = (initial_zoom * zoom_per_step.powi(step)).clamp(1.0, 50.0);
+                        println!("[CameraUtils] Zoom Toggled ON: factor={factor:.2}x (step={step})");
+                    } else {
+                        println!("[CameraUtils] Zoom Toggled OFF");
                         if let Ok(cfg) = CONFIG.lock() {
                             if !cfg.zoom.remember_zoom_steps {
                                 if let Ok(mut runtime) = ZOOM_RUNTIME.lock() {
@@ -451,6 +471,14 @@ impl mod_api::Hooks for CameraUtilsMod {
                 } else {
                     runtime.current_step = (runtime.current_step - 1).max(-step_count);
                 }
+
+                let (initial_zoom, zoom_per_step) = if let Ok(cfg) = CONFIG.lock() {
+                    (cfg.zoom.initial_zoom, cfg.zoom.zoom_per_step)
+                } else {
+                    (4.0, 1.5)
+                };
+                let factor = (initial_zoom * zoom_per_step.powi(runtime.current_step)).clamp(1.0, 50.0);
+                println!("[CameraUtils] Zoom Scroll: delta={wheel_delta:.1}, step={}, factor={factor:.2}x", runtime.current_step);
             }
             return mod_api::Flow::Cancel;
         }
