@@ -218,7 +218,7 @@ impl mod_api::Hooks for CameraUtilsMod {
                 0.5,
                 4.0,
             )
-            .tooltip("Magnification factor when zooming (1.0x to 10.0x)"),
+            .tooltip("The zoom level when you first press the keybind."),
         );
         let _ = r.register_setting(
             mod_api::SettingSpec::toggle(
@@ -237,7 +237,7 @@ impl mod_api::Hooks for CameraUtilsMod {
                 1.0,
                 10.0,
             )
-            .tooltip("Maximum steps you can zoom in or out with the mouse wheel (3 to 20)"),
+            .tooltip("How many scroll steps in each direction. You can scroll to zoom in or out from the initial zoom."),
         );
         let _ = r.register_setting(
             mod_api::SettingSpec::range(
@@ -248,7 +248,7 @@ impl mod_api::Hooks for CameraUtilsMod {
                 0.05,
                 1.5,
             )
-            .tooltip("Zoom multiplier per wheel step (1.1x to 2.0x)"),
+            .tooltip("The zoom multiplier applied per scroll step. 1.5x means each step zooms in 50% more."),
         );
         let _ = r.register_setting(
             mod_api::SettingSpec::toggle(
@@ -256,7 +256,7 @@ impl mod_api::Hooks for CameraUtilsMod {
                 "[Zoom] Remember Zoom Steps",
                 false,
             )
-            .tooltip("Keep current zoom level between zoom activations"),
+            .tooltip("Keep scroll zoom amount between zooming in and out."),
         );
         let _ = r.register_setting(
             mod_api::SettingSpec::choice(
@@ -337,10 +337,25 @@ impl mod_api::Hooks for CameraUtilsMod {
             config::KeyBehavior::Hold
         };
 
+        let remember = host.setting_bool("zoom_remember_steps").unwrap_or_else(|| {
+            if let Ok(cfg) = CONFIG.lock() {
+                cfg.zoom.remember_zoom_steps
+            } else {
+                false
+            }
+        });
+
         match key_behavior {
             config::KeyBehavior::Hold => {
                 let prev_down = ZOOM_PRESSED.swap(zoom_down, Ordering::Relaxed);
                 if zoom_down && !prev_down {
+                    if !remember {
+                        if let Ok(mut runtime) = ZOOM_RUNTIME.lock() {
+                            runtime.current_step = 0;
+                            runtime.is_active = false;
+                        }
+                    }
+
                     let (initial_zoom, zoom_per_step) = if let Ok(cfg) = CONFIG.lock() {
                         (cfg.zoom.initial_zoom, cfg.zoom.zoom_per_step)
                     } else {
@@ -348,15 +363,13 @@ impl mod_api::Hooks for CameraUtilsMod {
                     };
                     let step = if let Ok(runtime) = ZOOM_RUNTIME.lock() { runtime.current_step } else { 0 };
                     let factor = (initial_zoom * zoom_per_step.powi(step)).clamp(1.0, 50.0);
-                    println!("[CameraUtils] Zoom Started: factor={factor:.2}x (step={step})");
+                    println!("[CameraUtils] Zoom Started: factor={factor:.2}x (step={step}, remember={remember})");
                 } else if !zoom_down && prev_down {
                     println!("[CameraUtils] Zoom Ended");
-                    if let Ok(cfg) = CONFIG.lock() {
-                        if !cfg.zoom.remember_zoom_steps {
-                            if let Ok(mut runtime) = ZOOM_RUNTIME.lock() {
-                                runtime.current_step = 0;
-                                runtime.is_active = false;
-                            }
+                    if !remember {
+                        if let Ok(mut runtime) = ZOOM_RUNTIME.lock() {
+                            runtime.current_step = 0;
+                            runtime.is_active = false;
                         }
                     }
                 }
@@ -367,6 +380,13 @@ impl mod_api::Hooks for CameraUtilsMod {
                     let next = !prev;
                     ZOOM_TOGGLED.store(next, Ordering::Relaxed);
                     if next {
+                        if !remember {
+                            if let Ok(mut runtime) = ZOOM_RUNTIME.lock() {
+                                runtime.current_step = 0;
+                                runtime.is_active = false;
+                            }
+                        }
+
                         let (initial_zoom, zoom_per_step) = if let Ok(cfg) = CONFIG.lock() {
                             (cfg.zoom.initial_zoom, cfg.zoom.zoom_per_step)
                         } else {
@@ -374,15 +394,13 @@ impl mod_api::Hooks for CameraUtilsMod {
                         };
                         let step = if let Ok(runtime) = ZOOM_RUNTIME.lock() { runtime.current_step } else { 0 };
                         let factor = (initial_zoom * zoom_per_step.powi(step)).clamp(1.0, 50.0);
-                        println!("[CameraUtils] Zoom Toggled ON: factor={factor:.2}x (step={step})");
+                        println!("[CameraUtils] Zoom Toggled ON: factor={factor:.2}x (step={step}, remember={remember})");
                     } else {
                         println!("[CameraUtils] Zoom Toggled OFF");
-                        if let Ok(cfg) = CONFIG.lock() {
-                            if !cfg.zoom.remember_zoom_steps {
-                                if let Ok(mut runtime) = ZOOM_RUNTIME.lock() {
-                                    runtime.current_step = 0;
-                                    runtime.is_active = false;
-                                }
+                        if !remember {
+                            if let Ok(mut runtime) = ZOOM_RUNTIME.lock() {
+                                runtime.current_step = 0;
+                                runtime.is_active = false;
                             }
                         }
                     }
@@ -487,15 +505,16 @@ impl mod_api::Hooks for CameraUtilsMod {
     }
 
     fn zoom(&self, host: &dyn mod_api::ClientHost, _event: &mut mod_api::ZoomEvent) -> Option<mod_api::Zoom> {
-        let (key_behavior, initial_zoom, zoom_per_step, relative_sens) = if let Ok(cfg) = CONFIG.lock() {
+        let (key_behavior, initial_zoom, zoom_per_step, relative_sens, remember) = if let Ok(cfg) = CONFIG.lock() {
             (
                 cfg.zoom.key_behavior,
                 cfg.zoom.initial_zoom,
                 cfg.zoom.zoom_per_step,
                 cfg.zoom.relative_sensitivity,
+                cfg.zoom.remember_zoom_steps,
             )
         } else {
-            (config::KeyBehavior::Hold, 4.0, 1.5, 100.0)
+            (config::KeyBehavior::Hold, 4.0, 1.5, 100.0, false)
         };
 
         let is_zooming = match key_behavior {
@@ -503,28 +522,36 @@ impl mod_api::Hooks for CameraUtilsMod {
             config::KeyBehavior::Toggle => ZOOM_TOGGLED.load(Ordering::Relaxed),
         };
 
-        if is_zooming {
-            let step = if let Ok(runtime) = ZOOM_RUNTIME.lock() {
-                runtime.current_step
-            } else {
-                0
-            };
-
-            // Calculate final magnification factor: initial_zoom * (zoom_per_step ^ step)
-            let factor = (initial_zoom * zoom_per_step.powi(step)).clamp(1.0, 50.0);
-
-            // Relative sensitivity: inversely proportional to factor, scaled by relative_sens %
-            let base_turn = 1.0 / factor;
-            let turn = (base_turn * (relative_sens / 100.0)).clamp(0.01, 2.0);
-
-            Some(mod_api::Zoom {
-                factor,
-                smooth: true,
-                turn,
-            })
-        } else {
-            None
+        if !is_zooming {
+            if !remember {
+                if let Ok(mut runtime) = ZOOM_RUNTIME.lock() {
+                    if runtime.current_step != 0 || runtime.is_active {
+                        runtime.current_step = 0;
+                        runtime.is_active = false;
+                    }
+                }
+            }
+            return None;
         }
+
+        let step = if let Ok(runtime) = ZOOM_RUNTIME.lock() {
+            runtime.current_step
+        } else {
+            0
+        };
+
+        // Calculate final magnification factor: initial_zoom * (zoom_per_step ^ step)
+        let factor = (initial_zoom * zoom_per_step.powi(step)).clamp(1.0, 50.0);
+
+        // Relative sensitivity: inversely proportional to factor, scaled by relative_sens %
+        let base_turn = 1.0 / factor;
+        let turn = (base_turn * (relative_sens / 100.0)).clamp(0.01, 2.0);
+
+        Some(mod_api::Zoom {
+            factor,
+            smooth: true,
+            turn,
+        })
     }
 
     fn setting_changed(&self, host: &mut dyn mod_api::ClientHost, event: &mut mod_api::SettingChangedEvent<'_>) {
