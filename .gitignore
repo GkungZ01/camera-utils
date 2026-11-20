@@ -1,3 +1,6 @@
-/target/
-__pycache__/
-*.pyc
+target/
+**/*.rs.bk
+Cargo.lock
+.horizon/
+.DS_Store
+Thumbs.db

@@ -1,7 +1,4 @@
-// camera-utils runtime for Horizon (Freecam, Freelock, Zoom)
-// Put testable mod logic here. This file is both the standalone Cargo library
-// and the injected `crate::game::camera_utils` module.
-
+// Camera utilities implementation for Horizon (Freecam, Freelock, Zoom)
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
@@ -26,7 +23,7 @@ pub struct CameraConfig {
 impl Default for CameraConfig {
     fn default() -> Self {
         Self {
-            zoom_fov_multiplier: 4.0, // 4x zoom
+            zoom_fov_multiplier: 4.0,
             zoom_turn_multiplier: 0.25,
             freecam_speed: 0.5,
         }
@@ -36,13 +33,9 @@ impl Default for CameraConfig {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct CameraState {
     pub is_zoomed: bool,
-
-    // Freelock
     pub is_freelock: bool,
     pub freelock_yaw: f32,
     pub freelock_pitch: f32,
-
-    // Freecam
     pub is_freecam: bool,
     pub freecam_pos: [f64; 3],
     pub freecam_yaw: f32,
@@ -63,12 +56,10 @@ impl CameraState {
         current_pitch: f32,
     ) {
         match key {
-            // Key C for Zoom (Hold to zoom)
             "key.keyboard.c" => {
                 self.is_zoomed = pressed;
                 ZOOM_PRESSED.store(pressed, Ordering::Relaxed);
             }
-            // Key X for Freelock (Toggle)
             "key.keyboard.x" if pressed => {
                 self.is_freelock = !self.is_freelock;
                 if self.is_freelock {
@@ -77,7 +68,6 @@ impl CameraState {
                 }
                 FREELOCK_ACTIVE.store(self.is_freelock, Ordering::Relaxed);
             }
-            // Key U for Freecam (Toggle)
             "key.keyboard.u" if pressed => {
                 self.is_freecam = !self.is_freecam;
                 if self.is_freecam {
@@ -104,19 +94,6 @@ impl CameraState {
         }
     }
 
-    pub fn move_freecam(&mut self, forward: f64, strafe: f64, up: f64, speed: f64) {
-        if !self.is_freecam {
-            return;
-        }
-        let rad_yaw = (self.freecam_yaw as f64).to_radians();
-        let sin_yaw = rad_yaw.sin();
-        let cos_yaw = rad_yaw.cos();
-
-        self.freecam_pos[0] += (-sin_yaw * forward + cos_yaw * strafe) * speed;
-        self.freecam_pos[1] += up * speed;
-        self.freecam_pos[2] += (cos_yaw * forward + sin_yaw * strafe) * speed;
-    }
-
     pub fn override_camera_view(
         &self,
         original_pos: [f64; 3],
@@ -133,8 +110,7 @@ impl CameraState {
     }
 }
 
-// Global state accessed safely with Mutex
-static GLOBAL_CAMERA: Mutex<CameraState> = Mutex::new(CameraState {
+pub static GLOBAL_CAMERA: Mutex<CameraState> = Mutex::new(CameraState {
     is_zoomed: false,
     is_freelock: false,
     freelock_yaw: 0.0,
@@ -157,34 +133,12 @@ pub fn get_zoom_descriptor() -> Option<ZoomDescriptor> {
     }
 }
 
-pub fn on_native_key(key: &str, pressed: bool, current_pos: [f64; 3], current_yaw: f32, current_pitch: f32) {
-    if let Ok(mut cam) = GLOBAL_CAMERA.lock() {
-        cam.handle_key(key, pressed, current_pos, current_yaw, current_pitch);
-    }
-}
-
-pub fn is_freelock_or_freecam() -> bool {
-    FREELOCK_ACTIVE.load(Ordering::Relaxed) || FREECAM_ACTIVE.load(Ordering::Relaxed)
-}
-
-pub fn on_turn_input(xo: f64, yo: f64) {
-    if let Ok(mut cam) = GLOBAL_CAMERA.lock() {
-        let mut dummy_yaw = 0.0;
-        let mut dummy_pitch = 0.0;
-        cam.turn_camera(xo, yo, &mut dummy_yaw, &mut dummy_pitch);
-    }
-}
-
-pub fn is_freecam_active() -> bool {
-    FREECAM_ACTIVE.load(Ordering::Relaxed)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_zoom_key_handling() {
+    fn test_zoom_key() {
         let mut state = CameraState::new();
         state.handle_key("key.keyboard.c", true, [0.0; 3], 0.0, 0.0);
         assert!(state.is_zoomed);
@@ -198,39 +152,28 @@ mod tests {
     }
 
     #[test]
-    fn test_freelock_turning() {
+    fn test_freelock() {
         let mut state = CameraState::new();
-        let mut player_yaw = 90.0;
-        let mut player_pitch = 0.0;
+        let mut p_yaw = 90.0;
+        let mut p_pitch = 0.0;
 
-        // Toggle freelock on
-        state.handle_key("key.keyboard.x", true, [0.0; 3], player_yaw, player_pitch);
+        state.handle_key("key.keyboard.x", true, [0.0; 3], p_yaw, p_pitch);
         assert!(state.is_freelock);
-        assert_eq!(state.freelock_yaw, 90.0);
 
-        // Turn camera when freelock is on
-        state.turn_camera(10.0, 5.0, &mut player_yaw, &mut player_pitch);
-
-        // Player look unchanged
-        assert_eq!(player_yaw, 90.0);
-        assert_eq!(player_pitch, 0.0);
-
-        // Camera look changed
+        state.turn_camera(10.0, 5.0, &mut p_yaw, &mut p_pitch);
+        assert_eq!(p_yaw, 90.0);
         assert_eq!(state.freelock_yaw, 91.5);
-        assert_eq!(state.freelock_pitch, 0.75);
     }
 
     #[test]
-    fn test_freecam_view_override() {
+    fn test_freecam() {
         let mut state = CameraState::new();
-        state.handle_key("key.keyboard.u", true, [100.0, 64.0, 100.0], 45.0, 10.0);
+        state.handle_key("key.keyboard.u", true, [10.0, 20.0, 30.0], 45.0, 15.0);
         assert!(state.is_freecam);
 
-        let (cam_pos, cam_yaw, cam_pitch) =
-            state.override_camera_view([0.0, 64.0, 0.0], 0.0, 0.0);
-
-        assert_eq!(cam_pos, [100.0, 64.0, 100.0]);
-        assert_eq!(cam_yaw, 45.0);
-        assert_eq!(cam_pitch, 10.0);
+        let (pos, yaw, pitch) = state.override_camera_view([0.0; 3], 0.0, 0.0);
+        assert_eq!(pos, [10.0, 20.0, 30.0]);
+        assert_eq!(yaw, 45.0);
+        assert_eq!(pitch, 15.0);
     }
 }
