@@ -12,6 +12,8 @@ path = "src/lib.rs"
 
 [dependencies]
 horizon-mod-api = { path = ".horizon/sdk/api/crates/horizon-mod-api" }
+rcl-core = { path = "../RustyConfigLib/crates/rcl-core" }
+rcl-gui = { path = "../RustyConfigLib/crates/rcl-gui" }
 
 [package.metadata.horizon]
 sdk = "0a875da91dbb0fdcb7ba8c42c11341aa229af51a"
