@@ -393,7 +393,7 @@ impl mod_api::Hooks for CameraUtilsMod {
                             (4.0, 1.5)
                         };
                         let step = if let Ok(runtime) = ZOOM_RUNTIME.lock() { runtime.current_step } else { 0 };
-                        let factor = (initial_zoom * zoom_per_step.powi(step)).max(1.0);
+                        let factor = (initial_zoom * zoom_per_step.powi(step)).clamp(1.0, 10.0);
                         println!("[CameraUtils] Zoom Toggled ON: factor={factor:.2}x (step={step}, remember={remember})");
                     } else {
                         println!("[CameraUtils] Zoom Toggled OFF");
@@ -491,7 +491,11 @@ impl mod_api::Hooks for CameraUtilsMod {
             if let Ok(mut runtime) = ZOOM_RUNTIME.lock() {
                 runtime.is_active = true;
                 if wheel_delta > 0.0 {
-                    runtime.current_step = (runtime.current_step + 1).min(step_count);
+                    // Prevent increasing step further if factor is already >= 10.0
+                    let current_factor = initial_zoom * zoom_per_step.powi(runtime.current_step);
+                    if current_factor < 10.0 {
+                        runtime.current_step = (runtime.current_step + 1).min(step_count);
+                    }
                 } else {
                     // Prevent decreasing step further if factor is already <= 1.0
                     let current_factor = initial_zoom * zoom_per_step.powi(runtime.current_step);
@@ -500,7 +504,7 @@ impl mod_api::Hooks for CameraUtilsMod {
                     }
                 }
 
-                let factor = (initial_zoom * zoom_per_step.powi(runtime.current_step)).max(1.0);
+                let factor = (initial_zoom * zoom_per_step.powi(runtime.current_step)).clamp(1.0, 10.0);
                 println!("[CameraUtils] Zoom Scroll: delta={wheel_delta:.1}, step={}, factor={factor:.2}x", runtime.current_step);
             }
             return mod_api::Flow::Cancel;
@@ -546,7 +550,8 @@ impl mod_api::Hooks for CameraUtilsMod {
         };
 
         // Calculate final magnification factor: initial_zoom * (zoom_per_step ^ step)
-        let factor = (initial_zoom * zoom_per_step.powi(step)).max(1.0);
+        // Horizon engine clamps native zoom factor to 1.0..=10.0
+        let factor = (initial_zoom * zoom_per_step.powi(step)).clamp(1.0, 10.0);
 
         // Relative sensitivity: inversely proportional to factor, scaled by relative_sens %
         // If factor <= 1.0, keep full sensitivity (1.0) so camera movement is never restricted
@@ -554,7 +559,7 @@ impl mod_api::Hooks for CameraUtilsMod {
             1.0
         } else {
             let base_turn = 1.0 / factor;
-            (base_turn * (relative_sens / 100.0)).clamp(0.01, 2.0)
+            (base_turn * (relative_sens / 100.0)).clamp(0.05, 1.0)
         };
 
         Some(mod_api::Zoom {
@@ -732,15 +737,34 @@ mod tests {
         // Scroll back up 1 step: immediately restores step -3 (1.185x) with NO dead scrolls
         runtime.current_step = (runtime.current_step + 1).min(step_count);
         assert_eq!(runtime.current_step, -3);
-        let factor_back_up = (initial_zoom * zoom_per_step.powi(runtime.current_step)).max(1.0);
+        let factor_back_up = (initial_zoom * zoom_per_step.powi(runtime.current_step)).clamp(1.0, 10.0);
         assert!((factor_back_up - (4.0 / 1.5f32.powi(3))).abs() < 1e-4);
 
-        // Scroll up to max step 10 -> factor must not be capped at 50.0x
-        runtime.current_step = step_count;
-        let factor_step10 = (initial_zoom * zoom_per_step.powi(runtime.current_step)).max(1.0);
-        let expected_step10 = 4.0 * 1.5f32.powi(10);
-        assert!((factor_step10 - expected_step10).abs() < 1e-3);
-        assert!(factor_step10 > 200.0);
+        // Scroll in continuously until factor reaches 10.0x ceiling
+        for _ in 0..20 {
+            let current_factor = initial_zoom * zoom_per_step.powi(runtime.current_step);
+            if current_factor < 10.0 {
+                runtime.current_step = (runtime.current_step + 1).min(step_count);
+            }
+        }
+        // At initial=4.0 and per_step=1.5:
+        // step 0: 4.0
+        // step 1: 6.0
+        // step 2: 9.0
+        // step 3: 13.5 (current_factor at step 2 was 9.0 < 10.0, so it increased to 3, factor clamped to 10.0)
+        // Next attempts won't increase step further because current_factor (13.5) is not < 10.0.
+        assert_eq!(runtime.current_step, 3);
+        let max_clamped_factor = (initial_zoom * zoom_per_step.powi(runtime.current_step)).clamp(1.0, 10.0);
+        assert_eq!(max_clamped_factor, 10.0);
+
+        // Scroll out 1 step from ceiling: immediately drops back to step 2 (9.0x) with NO dead scrolls
+        let current_factor = initial_zoom * zoom_per_step.powi(runtime.current_step);
+        if current_factor > 1.0 {
+            runtime.current_step = (runtime.current_step - 1).max(-step_count);
+        }
+        assert_eq!(runtime.current_step, 2);
+        let factor_drop = (initial_zoom * zoom_per_step.powi(runtime.current_step)).clamp(1.0, 10.0);
+        assert!((factor_drop - 9.0).abs() < 1e-4);
     }
 
     #[test]
