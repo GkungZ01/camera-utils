@@ -738,67 +738,88 @@ impl mod_api::Hooks for CameraUtilsMod {
             return;
         }
 
-        // Draw In-Game Quick Menu Panel
+        // Draw In-Game Quick Menu Panel (YACL-inspired Clean Style)
         let (window_w, _window_h) = {
             let s = event.draw.size();
             (s[0], s[1])
         };
 
-        let panel_w = 260.0;
-        let panel_h = 190.0;
+        let panel_w = 340.0;
+        let panel_h = 210.0;
         let x = (window_w - panel_w) / 2.0;
-        let y = 30.0;
+        let y = 25.0;
 
-        // Dark translucent background with border
-        event.draw.fill([x, y, panel_w, panel_h], 0xDD111118);
-        event.draw.fill([x - 1.0, y - 1.0, panel_w + 2.0, 1.0], 0xFF4A90E2);
-        event.draw.fill([x - 1.0, y + panel_h, panel_w + 2.0, 1.0], 0xFF4A90E2);
-        event.draw.fill([x - 1.0, y, 1.0, panel_h], 0xFF4A90E2);
-        event.draw.fill([x + panel_w, y, 1.0, panel_h], 0xFF4A90E2);
+        // Dark translucent background with sleek YACL-style borders
+        event.draw.fill([x, y, panel_w, panel_h], 0xEE111318);
+        event.draw.fill([x - 1.0, y - 1.0, panel_w + 2.0, 1.0], 0xFF3B82F6);
+        event.draw.fill([x - 1.0, y + panel_h, panel_w + 2.0, 1.0], 0xFF1E293B);
+        event.draw.fill([x - 1.0, y, 1.0, panel_h], 0xFF3B82F6);
+        event.draw.fill([x + panel_w, y, 1.0, panel_h], 0xFF3B82F6);
 
-        // Header
-        event.draw.text("§6§l[ Camera Utils Menu ]", [x + 10.0, y + 8.0], 0xFFFFFFFF, true);
-        event.draw.text("§7Press 'K' to toggle", [x + panel_w - 95.0, y + 9.0], 0xFFAAAAAA, false);
+        // Header Title
+        event.draw.text("§f§lCAMERA UTILS §7- §9Quick Settings", [x + 14.0, y + 10.0], 0xFFFFFFFF, true);
+        event.draw.text("§8[K] Close", [x + panel_w - 65.0, y + 10.0], 0xFFAAAAAA, false);
 
-        // Divider
-        event.draw.fill([x + 10.0, y + 24.0, panel_w - 20.0, 1.0], 0x44FFFFFF);
+        // Tab Navigation Bar
+        let tab_y = y + 26.0;
+        event.draw.fill([x + 10.0, tab_y, panel_w - 20.0, 20.0], 0xFF1E222D);
+        event.draw.text("§b§l[ 🔍 Zoom ]", [x + 16.0, tab_y + 6.0], 0xFFFFFFFF, true);
+        event.draw.text("§e§l[ 🦅 Freecam ]", [x + 120.0, tab_y + 6.0], 0xFFFFFFFF, true);
+        event.draw.text("§a§l[ 🔒 Freelock ]", [x + 230.0, tab_y + 6.0], 0xFFFFFFFF, true);
 
-        // Zoom Info
-        let (initial_zoom, zoom_per_step) = if let Ok(cfg) = CONFIG.lock() {
-            (cfg.zoom.initial_zoom, cfg.zoom.zoom_per_step)
+        // Card Container Box
+        let card_y = tab_y + 26.0;
+        let card_w = panel_w - 20.0;
+        let card_h = 115.0;
+        event.draw.fill([x + 10.0, card_y, card_w, card_h], 0x88171A23);
+        event.draw.fill([x + 10.0, card_y, card_w, 1.0], 0x33FFFFFF);
+
+        // Group 1: Zoom
+        let (initial_zoom, zoom_per_step, scroll_enabled) = if let Ok(cfg) = CONFIG.lock() {
+            (cfg.zoom.initial_zoom, cfg.zoom.zoom_per_step, cfg.zoom.enable_scroll_zoom)
         } else {
-            (4.0, 1.5)
+            (4.0, 1.5, true)
         };
         let zoom_step = if let Ok(rt) = ZOOM_RUNTIME.lock() { rt.current_step } else { 0 };
         let cur_factor = (initial_zoom * zoom_per_step.powi(zoom_step)).clamp(1.0, 10.0);
+        let scroll_status = if scroll_enabled { "§aON" } else { "§cOFF" };
 
-        event.draw.text("§e§l🔍 Zoom", [x + 10.0, y + 32.0], 0xFFFFFFFF, true);
-        let zoom_str = format!("Factor: §b{cur_factor:.2}x §7(Step: §f{zoom_step}§7, Base: §f{initial_zoom:.1}x§7)");
-        event.draw.text(&zoom_str, [x + 20.0, y + 46.0], 0xFFDDDDDD, true);
-        event.draw.text("§8Key: §7C §8| Scroll: §7Adjust Zoom", [x + 20.0, y + 58.0], 0xFFAAAAAA, false);
+        let row1_y = card_y + 8.0;
+        event.draw.text("§b• Zoom Level", [x + 18.0, row1_y], 0xFFFFFFFF, true);
+        event.draw.text(&format!("§f{cur_factor:.2}x §8(Base {initial_zoom:.1}x §8| Step {zoom_step})"), [x + 120.0, row1_y], 0xFFDDDDDD, false);
+        event.draw.text(&format!("§7Scroll: {scroll_status}"), [x + card_w - 50.0, row1_y], 0xFFDDDDDD, false);
 
-        // Freecam Info
+        // Group 2: Freecam
         let freecam_on = freecam::active();
         let fc_speed = host.setting_f64("freecam_speed").unwrap_or(freecam::DEFAULT_SPEED);
-        let fc_status = if freecam_on { "§aActive" } else { "§cDisabled" };
+        let fc_noclip = host.setting_bool("freecam_noclip").unwrap_or(true);
+        let fc_freeze = host.setting_bool("freeze_player").unwrap_or(true);
+        let fc_status = if freecam_on { "§aActive" } else { "§7Standby" };
+        let noclip_status = if fc_noclip { "§aON" } else { "§cOFF" };
+        let freeze_status = if fc_freeze { "§aON" } else { "§cOFF" };
 
-        event.draw.text("§e§l🦅 Freecam", [x + 10.0, y + 76.0], 0xFFFFFFFF, true);
-        let fc_str = format!("Status: {fc_status} §7| Speed: §b{fc_speed:.2} §7| NoClip: §aON");
-        event.draw.text(&fc_str, [x + 20.0, y + 90.0], 0xFFDDDDDD, true);
-        event.draw.text("§8Key: §7U §8| Move: §7WASD/Space/Shift §8| Fast: §7Ctrl", [x + 20.0, y + 102.0], 0xFFAAAAAA, false);
+        let row2_y = card_y + 42.0;
+        event.draw.fill([x + 15.0, row2_y - 6.0, card_w - 10.0, 1.0], 0x1AFFFFFF);
+        event.draw.text("§e• Freecam", [x + 18.0, row2_y], 0xFFFFFFFF, true);
+        event.draw.text(&format!("Status: {fc_status} §8| Speed: §f{fc_speed:.2}"), [x + 120.0, row2_y], 0xFFDDDDDD, false);
+        event.draw.text(&format!("§7NoClip: {noclip_status} §8| Freeze: {freeze_status}"), [x + 120.0, row2_y + 14.0], 0xFFAAAAAA, false);
 
-        // Freelock Info
+        // Group 3: Freelock
         let freelock_on = FREELOCK_ACTIVE.load(Ordering::Relaxed);
-        let fl_status = if freelock_on { "§aActive" } else { "§cDisabled" };
+        let fl_status = if freelock_on { "§aActive" } else { "§7Standby" };
+        let toggle_mode = host.setting_bool("toggle_mode").unwrap_or(true);
+        let mode_str = if toggle_mode { "Toggle" } else { "Hold" };
 
-        event.draw.text("§e§l🔒 Freelock", [x + 10.0, y + 120.0], 0xFFFFFFFF, true);
-        let fl_str = format!("Status: {fl_status} §7(Decouple camera from player body)");
-        event.draw.text(&fl_str, [x + 20.0, y + 134.0], 0xFFDDDDDD, true);
-        event.draw.text("§8Key: §7X §8(Press to look around freely)", [x + 20.0, y + 146.0], 0xFFAAAAAA, false);
+        let row3_y = card_y + 80.0;
+        event.draw.fill([x + 15.0, row3_y - 6.0, card_w - 10.0, 1.0], 0x1AFFFFFF);
+        event.draw.text("§a• Freelock", [x + 18.0, row3_y], 0xFFFFFFFF, true);
+        event.draw.text(&format!("Status: {fl_status} §8| Mode: §f{mode_str}"), [x + 120.0, row3_y], 0xFFDDDDDD, false);
+        event.draw.text("§8Key: [X] Freelock  |  [U] Freecam  |  [C] Zoom", [x + 18.0, row3_y + 16.0], 0xFF888888, false);
 
-        // Footer Hint
-        event.draw.fill([x + 10.0, y + 162.0, panel_w - 20.0, 1.0], 0x44FFFFFF);
-        event.draw.text("§8More settings in: §6Options > Mods > Camera Utils", [x + 15.0, y + 170.0], 0xFF888888, false);
+        // Footer Hint (YACL config reminder)
+        let footer_y = y + panel_h - 18.0;
+        event.draw.fill([x + 10.0, footer_y - 4.0, panel_w - 20.0, 1.0], 0x22FFFFFF);
+        event.draw.text("§8Full options available in: §6Options > Mods > Camera Utils", [x + 16.0, footer_y], 0xFF888888, false);
     }
 
     fn calculate_player_turn(&self, _host: &dyn mod_api::ClientHost, event: &mut mod_api::CalculatePlayerTurnEvent) {
