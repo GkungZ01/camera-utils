@@ -2,6 +2,7 @@
   "key.camera_utils.zoom": "Zoom",
   "key.camera_utils.freelock": "Freelock",
   "key.camera_utils.freecam": "Freecam",
+  "key.camera_utils.config_gui": "Open Camera Utils Menu",
 
   "setting.camera_utils.zoom_initial": "Initial Zoom",
   "setting.camera_utils.zoom_initial.tooltip": "The zoom level when you first press the keybind.",

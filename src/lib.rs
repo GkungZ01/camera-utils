@@ -24,6 +24,7 @@ pub static ZOOM_PRESSED: AtomicBool = AtomicBool::new(false);
 pub static ZOOM_TOGGLED: AtomicBool = AtomicBool::new(false);
 pub static FREELOCK_ACTIVE: AtomicBool = AtomicBool::new(false);
 pub static FREECAM_ACTIVE: AtomicBool = AtomicBool::new(false);
+pub static GUI_OPEN: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ZoomRuntime {
@@ -213,6 +214,11 @@ impl mod_api::Hooks for CameraUtilsMod {
         r.register_key_mapping(
             mod_api::KeyRegistration::new("freecam", "key.keyboard.u")
                 .label("key.camera_utils.freecam")
+                .context(mod_api::KeyConflictContext::InGame),
+        );
+        r.register_key_mapping(
+            mod_api::KeyRegistration::new("config_gui", "key.keyboard.k")
+                .label("key.camera_utils.config_gui")
                 .context(mod_api::KeyConflictContext::InGame),
         );
 
@@ -428,6 +434,11 @@ impl mod_api::Hooks for CameraUtilsMod {
         let pos = cam.as_ref().map_or([0.0; 3], |c| c.position);
         let yaw = cam.as_ref().map_or(0.0, |c| c.yaw);
         let pitch = cam.as_ref().map_or(0.0, |c| c.pitch);
+
+        while host.consume_click("camera_utils", "config_gui") {
+            let current = GUI_OPEN.load(Ordering::Relaxed);
+            GUI_OPEN.store(!current, Ordering::Relaxed);
+        }
 
         let freelock_clicked = host.consume_click("camera_utils", "freelock");
         while host.consume_click("camera_utils", "freecam") {
@@ -738,6 +749,78 @@ impl mod_api::Hooks for CameraUtilsMod {
                 event.pitch = new_pitch;
             }
         }
+    }
+
+    fn render_gui_post(
+        &self,
+        host: &dyn mod_api::ClientHost,
+        event: &mut mod_api::RenderGuiPostEvent<'_>,
+    ) {
+        if !GUI_OPEN.load(Ordering::Relaxed) {
+            return;
+        }
+
+        // Draw In-Game Quick Menu Panel
+        let (window_w, _window_h) = {
+            let s = event.draw.size();
+            (s[0], s[1])
+        };
+
+        let panel_w = 260.0;
+        let panel_h = 190.0;
+        let x = (window_w - panel_w) / 2.0;
+        let y = 30.0;
+
+        // Dark translucent background with border
+        event.draw.fill([x, y, panel_w, panel_h], 0xDD111118);
+        event.draw.fill([x - 1.0, y - 1.0, panel_w + 2.0, 1.0], 0xFF4A90E2);
+        event.draw.fill([x - 1.0, y + panel_h, panel_w + 2.0, 1.0], 0xFF4A90E2);
+        event.draw.fill([x - 1.0, y, 1.0, panel_h], 0xFF4A90E2);
+        event.draw.fill([x + panel_w, y, 1.0, panel_h], 0xFF4A90E2);
+
+        // Header
+        event.draw.text("§6§l[ Camera Utils Menu ]", [x + 10.0, y + 8.0], 0xFFFFFFFF, true);
+        event.draw.text("§7Press 'K' to toggle", [x + panel_w - 95.0, y + 9.0], 0xFFAAAAAA, false);
+
+        // Divider
+        event.draw.fill([x + 10.0, y + 24.0, panel_w - 20.0, 1.0], 0x44FFFFFF);
+
+        // Zoom Info
+        let (initial_zoom, zoom_per_step) = if let Ok(cfg) = CONFIG.lock() {
+            (cfg.zoom.initial_zoom, cfg.zoom.zoom_per_step)
+        } else {
+            (4.0, 1.5)
+        };
+        let zoom_step = if let Ok(rt) = ZOOM_RUNTIME.lock() { rt.current_step } else { 0 };
+        let cur_factor = (initial_zoom * zoom_per_step.powi(zoom_step)).clamp(1.0, 10.0);
+
+        event.draw.text("§e§l🔍 Zoom", [x + 10.0, y + 32.0], 0xFFFFFFFF, true);
+        let zoom_str = format!("Factor: §b{cur_factor:.2}x §7(Step: §f{zoom_step}§7, Base: §f{initial_zoom:.1}x§7)");
+        event.draw.text(&zoom_str, [x + 20.0, y + 46.0], 0xFFDDDDDD, true);
+        event.draw.text("§8Key: §7C §8| Scroll: §7Adjust Zoom", [x + 20.0, y + 58.0], 0xFFAAAAAA, false);
+
+        // Freecam Info
+        let freecam_on = freecam::active();
+        let fc_speed = host.setting_f64("freecam_speed").unwrap_or(freecam::DEFAULT_SPEED);
+        let fc_status = if freecam_on { "§aActive" } else { "§cDisabled" };
+
+        event.draw.text("§e§l🦅 Freecam", [x + 10.0, y + 76.0], 0xFFFFFFFF, true);
+        let fc_str = format!("Status: {fc_status} §7| Speed: §b{fc_speed:.2} §7| NoClip: §aON");
+        event.draw.text(&fc_str, [x + 20.0, y + 90.0], 0xFFDDDDDD, true);
+        event.draw.text("§8Key: §7U §8| Move: §7WASD/Space/Shift §8| Fast: §7Ctrl", [x + 20.0, y + 102.0], 0xFFAAAAAA, false);
+
+        // Freelock Info
+        let freelock_on = FREELOCK_ACTIVE.load(Ordering::Relaxed);
+        let fl_status = if freelock_on { "§aActive" } else { "§cDisabled" };
+
+        event.draw.text("§e§l🔒 Freelock", [x + 10.0, y + 120.0], 0xFFFFFFFF, true);
+        let fl_str = format!("Status: {fl_status} §7(Decouple camera from player body)");
+        event.draw.text(&fl_str, [x + 20.0, y + 134.0], 0xFFDDDDDD, true);
+        event.draw.text("§8Key: §7X §8(Press to look around freely)", [x + 20.0, y + 146.0], 0xFFAAAAAA, false);
+
+        // Footer Hint
+        event.draw.fill([x + 10.0, y + 162.0, panel_w - 20.0, 1.0], 0x44FFFFFF);
+        event.draw.text("§8More settings in: §6Options > Mods > Camera Utils", [x + 15.0, y + 170.0], 0xFF888888, false);
     }
 
     fn calculate_player_turn(&self, _host: &dyn mod_api::ClientHost, event: &mut mod_api::CalculatePlayerTurnEvent) {
