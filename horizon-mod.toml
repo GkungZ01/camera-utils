@@ -12,3 +12,14 @@ capabilities = ["registries"]
 game = "26.3"
 horizon = "0a875da91dbb0fdcb7ba8c42c11341aa229af51a"
 mixins = "e59da9094f0c2fdda6c627fe9eff22dec6a906f0"
+
+[[native.mixin]]
+id = "turn"
+target = "horizon_client::game::perspective::Game<'_>::turn_player"
+kind = "HEAD"
+cancellable = true
+helper = "src/mixins/turn.rs"
+bindings = [
+  { name = "xo", ty = "f64", value = "xo" },
+  { name = "yo", ty = "f64", value = "yo" },
+]

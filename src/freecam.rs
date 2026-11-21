@@ -1,0 +1,184 @@
+use std::cell::RefCell;
+
+pub const FORWARD: usize = 0;
+pub const BACK: usize = 1;
+pub const LEFT: usize = 2;
+pub const RIGHT: usize = 3;
+pub const UP: usize = 4;
+pub const DOWN: usize = 5;
+pub const SPRINT: usize = 6;
+
+pub const DEFAULT_SPEED: f64 = 1.0;
+pub const MIN_SPEED: f64 = 0.05;
+pub const MAX_SPEED: f64 = 8.0;
+pub const SPEED_STEP: f64 = 0.05;
+const WHEEL_STEP: f64 = 1.2;
+const SPRINT_FACTOR: f64 = 2.0;
+const TURN: f64 = 0.15;
+const MAX_PITCH: f32 = 90.0;
+const RADIUS: f64 = 0.2;
+
+pub const MOVES: [&str; 7] = [
+    "key.keyboard.w",
+    "key.keyboard.s",
+    "key.keyboard.a",
+    "key.keyboard.d",
+    "key.keyboard.space",
+    "key.keyboard.left.shift",
+    "key.keyboard.left.control",
+];
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Settings {
+    pub noclip: bool,
+    pub speed: f64,
+}
+
+impl Settings {
+    pub fn new(noclip: bool, speed: f64) -> Self {
+        let speed = if speed.is_finite() {
+            speed.clamp(MIN_SPEED, MAX_SPEED)
+        } else {
+            DEFAULT_SPEED
+        };
+        Self { noclip, speed }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Camera {
+    pub at: [f64; 3],
+    pub previous: [f64; 3],
+    pub yaw: f32,
+    pub pitch: f32,
+    pub view: u8,
+}
+
+#[derive(Default)]
+struct State {
+    settings: Option<Settings>,
+    camera: Option<Camera>,
+    held: [bool; 7],
+}
+
+thread_local! {
+    static STATE: RefCell<State> = RefCell::new(State::default());
+}
+
+pub fn set_settings(settings: Settings) {
+    STATE.with_borrow_mut(|s| s.settings = Some(settings));
+}
+
+pub fn active() -> bool {
+    STATE.with_borrow(|s| s.camera.is_some())
+}
+
+pub fn start(eye: [f64; 3], yaw: f32, pitch: f32, view: u8) {
+    STATE.with_borrow_mut(|s| {
+        s.camera = Some(Camera {
+            at: eye,
+            previous: eye,
+            yaw,
+            pitch,
+            view,
+        });
+        s.held = [false; 7];
+    });
+}
+
+pub fn stop() -> Option<u8> {
+    STATE.with_borrow_mut(|s| s.camera.take().map(|c| c.view))
+}
+
+pub fn hold(input: usize, down: bool) {
+    STATE.with_borrow_mut(|s| {
+        if let Some(held) = s.held.get_mut(input) {
+            *held = down;
+        }
+    });
+}
+
+pub fn turn(xo: f64, yo: f64) -> bool {
+    STATE.with_borrow_mut(|s| {
+        let Some(c) = s.camera.as_mut() else {
+            return false;
+        };
+        c.yaw += (xo * TURN) as f32;
+        c.pitch = (c.pitch + (yo * TURN) as f32).clamp(-MAX_PITCH, MAX_PITCH);
+        true
+    })
+}
+
+pub fn tick(solid: impl Fn([i32; 3]) -> bool) {
+    STATE.with_borrow_mut(|s| {
+        let speed = s.settings.map_or(DEFAULT_SPEED, |c| c.speed);
+        let held = s.held;
+        let Some(c) = s.camera.as_mut() else { return };
+        c.previous = c.at;
+        c.at = slide(c.at, motion(c.yaw, held, speed), &solid);
+    });
+}
+
+pub fn view(partial: f32) -> Option<([f64; 3], f32, f32)> {
+    STATE.with_borrow(|s| {
+        let c = s.camera?;
+        let t = f64::from(partial);
+        Some((
+            std::array::from_fn(|i| c.previous[i] + (c.at[i] - c.previous[i]) * t),
+            c.yaw,
+            c.pitch,
+        ))
+    })
+}
+
+pub fn wheel(steps: f32) -> Option<Settings> {
+    STATE.with_borrow_mut(|s| {
+        s.camera?;
+        let settings = s.settings.get_or_insert(Settings {
+            noclip: true,
+            speed: DEFAULT_SPEED,
+        });
+        settings.speed =
+            (settings.speed * WHEEL_STEP.powf(f64::from(steps))).clamp(MIN_SPEED, MAX_SPEED);
+        Some(*settings)
+    })
+}
+
+pub fn motion(yaw: f32, held: [bool; 7], speed: f64) -> [f64; 3] {
+    let axis = |plus: usize, minus: usize| {
+        f64::from(u8::from(held[plus])) - f64::from(u8::from(held[minus]))
+    };
+    let (forward, strafe, rise) = (axis(FORWARD, BACK), axis(LEFT, RIGHT), axis(UP, DOWN));
+    let speed = if held[SPRINT] {
+        speed * SPRINT_FACTOR
+    } else {
+        speed
+    };
+    let yaw = f64::from(yaw).to_radians();
+    let (x, z) = (
+        strafe * yaw.cos() - forward * yaw.sin(),
+        forward * yaw.cos() + strafe * yaw.sin(),
+    );
+    let length = x.hypot(z);
+    let scale = if length > 0.0 { speed / length } else { 0.0 };
+    [x * scale, rise * speed, z * scale]
+}
+
+pub fn slide(at: [f64; 3], delta: [f64; 3], solid: &impl Fn([i32; 3]) -> bool) -> [f64; 3] {
+    let mut next = at;
+    for axis in 0..3 {
+        let mut moved = next;
+        moved[axis] += delta[axis];
+        if !blocked(moved, solid) {
+            next = moved;
+        }
+    }
+    next
+}
+
+fn blocked(at: [f64; 3], solid: &impl Fn([i32; 3]) -> bool) -> bool {
+    let low = at.map(|v| (v - RADIUS).floor() as i32);
+    let high = at.map(|v| (v + RADIUS).floor() as i32);
+    (low[0]..=high[0])
+        .any(|x| (low[1]..=high[1]).any(|y| (low[2]..=high[2]).any(|z| solid([x, y, z]))))
+}

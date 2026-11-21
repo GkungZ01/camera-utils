@@ -1,12 +1,21 @@
 // Camera utilities implementation for Horizon (Freecam, Freelock, Zoom)
 pub mod config;
+pub mod freecam;
 pub mod gui;
 
 pub use config::CameraConfig;
+pub use freecam::turn;
 pub use gui::ConfigScreen;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+
+#[allow(dead_code)]
+const VIEWS: [mod_api::CameraType; 3] = [
+    mod_api::CameraType::FirstPerson,
+    mod_api::CameraType::ThirdPersonBack,
+    mod_api::CameraType::ThirdPersonFront,
+];
 
 #[derive(Default)]
 pub struct CameraUtilsMod;
@@ -279,17 +288,24 @@ impl mod_api::Hooks for CameraUtilsMod {
             .tooltip("Mouse sensitivity percentage relative to zoom level (0% to 150%)"),
         );
 
-        // Freecam Category
         let _ = r.register_setting(
             mod_api::SettingSpec::range(
                 "freecam_speed",
                 "[Freecam] Flight Speed",
-                0.1,
-                5.0,
-                0.1,
-                0.5,
+                freecam::MIN_SPEED,
+                freecam::MAX_SPEED,
+                freecam::SPEED_STEP,
+                freecam::DEFAULT_SPEED,
             )
             .tooltip("Detached camera flight speed"),
+        );
+        let _ = r.register_setting(
+            mod_api::SettingSpec::toggle(
+                "freecam_noclip",
+                "[Freecam] NoClip",
+                true,
+            )
+            .tooltip("Fly through blocks"),
         );
         let _ = r.register_setting(
             mod_api::SettingSpec::toggle(
@@ -414,16 +430,48 @@ impl mod_api::Hooks for CameraUtilsMod {
         let pitch = cam.as_ref().map_or(0.0, |c| c.pitch);
 
         let freelock_clicked = host.consume_click("camera_utils", "freelock");
-        let freecam_clicked = host.consume_click("camera_utils", "freecam");
+        while host.consume_click("camera_utils", "freecam") {
+            if freecam::active() {
+                if let Some(view) = freecam::stop() {
+                    host.set_camera_type(VIEWS[usize::from(view).min(VIEWS.len() - 1)]);
+                }
+                FREECAM_ACTIVE.store(false, Ordering::Relaxed);
+            } else {
+                if let Some(cam) = host.camera() {
+                    let view = VIEWS
+                        .iter()
+                        .position(|v| *v == host.camera_type())
+                        .unwrap_or(0) as u8;
+                    let noclip = host.setting_bool("freecam_noclip").unwrap_or(true);
+                    let speed = host.setting_f64("freecam_speed").unwrap_or(freecam::DEFAULT_SPEED);
+                    freecam::set_settings(freecam::Settings::new(noclip, speed));
+                    freecam::start(cam.position, cam.yaw, cam.pitch, view);
+                    host.set_camera_type(mod_api::CameraType::ThirdPersonBack);
+                    FREECAM_ACTIVE.store(true, Ordering::Relaxed);
+                }
+            }
+        }
 
-        if freelock_clicked || freecam_clicked {
+        if freecam::active() {
+            if host.camera_entity().is_none() {
+                if let Some(view) = freecam::stop() {
+                    host.set_camera_type(VIEWS[usize::from(view).min(VIEWS.len() - 1)]);
+                }
+                FREECAM_ACTIVE.store(false, Ordering::Relaxed);
+            } else {
+                host.set_camera_type(mod_api::CameraType::ThirdPersonBack);
+                let noclip = host.setting_bool("freecam_noclip").unwrap_or(true);
+                let speed = host.setting_f64("freecam_speed").unwrap_or(freecam::DEFAULT_SPEED);
+                let current = freecam::Settings::new(noclip, speed);
+                freecam::set_settings(current);
+                let host_ref = &*host;
+                freecam::tick(|block| !current.noclip && !host_ref.block_collision(block).is_empty());
+            }
+        }
+
+        if freelock_clicked {
             if let Ok(mut state) = GLOBAL_CAMERA.lock() {
-                if freelock_clicked {
-                    state.handle_key("freelock", true, pos, yaw, pitch);
-                }
-                if freecam_clicked {
-                    state.handle_key("freecam", true, pos, yaw, pitch);
-                }
+                state.handle_key("freelock", true, pos, yaw, pitch);
             }
         }
     }
@@ -435,6 +483,13 @@ impl mod_api::Hooks for CameraUtilsMod {
             _ => return,
         };
 
+        if freecam::active()
+            && let Some(input) = freecam::MOVES.iter().position(|m| *m == event.key)
+            && (!pressed || host.playing())
+        {
+            freecam::hold(input, pressed);
+        }
+
         let cam = host.camera();
         let pos = cam.as_ref().map_or([0.0; 3], |c| c.position);
         let yaw = cam.as_ref().map_or(0.0, |c| c.yaw);
@@ -444,6 +499,27 @@ impl mod_api::Hooks for CameraUtilsMod {
             state.handle_key(event.key, pressed, pos, yaw, pitch);
             if let Some(layout) = event.layout_key {
                 state.handle_key(layout, pressed, pos, yaw, pitch);
+            }
+        }
+    }
+
+    fn movement_input(&self, _host: &dyn mod_api::ClientHost, event: &mut mod_api::MovementInputEvent) {
+        if freecam::active() {
+            let freeze = if let Ok(cfg) = CONFIG.lock() {
+                cfg.freecam.freeze_player_movement
+            } else {
+                true
+            };
+            if freeze {
+                event.forward = 0.0;
+                event.strafe = 0.0;
+                event.jump = false;
+                event.sneak = false;
+                event.forward_key = false;
+                event.backward_key = false;
+                event.left_key = false;
+                event.right_key = false;
+                event.sprint = false;
             }
         }
     }
@@ -467,6 +543,15 @@ impl mod_api::Hooks for CameraUtilsMod {
         };
 
         if !is_zooming {
+            if freecam::active() {
+                let steps = event.accumulated[1];
+                if steps != 0 {
+                    if let Some(changed) = freecam::wheel(steps as f32) {
+                        host.set_setting("camera_utils", "freecam_speed", &changed.speed.to_string());
+                        return mod_api::Flow::Cancel;
+                    }
+                }
+            }
             return mod_api::Flow::Continue;
         }
 
@@ -636,10 +721,15 @@ impl mod_api::Hooks for CameraUtilsMod {
     }
 
     fn camera_pose(&self, _host: &dyn mod_api::ClientHost, event: &mut mod_api::CameraPoseEvent) {
-        let freelock = FREELOCK_ACTIVE.load(Ordering::Relaxed);
-        let freecam = FREECAM_ACTIVE.load(Ordering::Relaxed);
+        if let Some((at, yaw, pitch)) = freecam::view(event.partial) {
+            *event.position = at;
+            event.yaw = yaw;
+            event.pitch = pitch;
+            return;
+        }
 
-        if freelock || freecam {
+        let freelock = FREELOCK_ACTIVE.load(Ordering::Relaxed);
+        if freelock {
             if let Ok(state) = GLOBAL_CAMERA.lock() {
                 let (new_pos, new_yaw, new_pitch) =
                     state.override_camera_view(*event.position, event.yaw, event.pitch);
@@ -695,14 +785,24 @@ mod tests {
 
     #[test]
     fn test_freecam() {
-        let mut state = CameraState::new();
-        state.handle_key("key.keyboard.u", true, [10.0, 20.0, 30.0], 45.0, 15.0);
-        assert!(state.is_freecam);
+        freecam::start([10.0, 20.0, 30.0], 45.0, 15.0, 0);
+        assert!(freecam::active());
 
-        let (pos, yaw, pitch) = state.override_camera_view([0.0; 3], 0.0, 0.0);
+        let (pos, yaw, pitch) = freecam::view(1.0).unwrap();
         assert_eq!(pos, [10.0, 20.0, 30.0]);
         assert_eq!(yaw, 45.0);
         assert_eq!(pitch, 15.0);
+
+        // Test turn
+        assert!(freecam::turn(10.0, 5.0));
+        let (_, yaw_turned, pitch_turned) = freecam::view(1.0).unwrap();
+        assert!((yaw_turned - (45.0 + 10.0 * 0.15)).abs() < 1e-4);
+        assert!((pitch_turned - (15.0 + 5.0 * 0.15)).abs() < 1e-4);
+
+        // Test stop
+        let orig_view = freecam::stop();
+        assert_eq!(orig_view, Some(0));
+        assert!(!freecam::active());
     }
 
     #[test]
