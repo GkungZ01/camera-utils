@@ -91,10 +91,6 @@ pub struct CameraState {
     pub is_freelock: bool,
     pub freelock_yaw: f32,
     pub freelock_pitch: f32,
-    pub is_freecam: bool,
-    pub freecam_pos: [f64; 3],
-    pub freecam_yaw: f32,
-    pub freecam_pitch: f32,
 }
 
 impl CameraState {
@@ -106,7 +102,7 @@ impl CameraState {
         &mut self,
         key: &str,
         pressed: bool,
-        current_pos: [f64; 3],
+        _current_pos: [f64; 3],
         current_yaw: f32,
         current_pitch: f32,
     ) {
@@ -123,24 +119,12 @@ impl CameraState {
                 }
                 FREELOCK_ACTIVE.store(self.is_freelock, Ordering::Relaxed);
             }
-            "key.keyboard.u" | "freecam" if pressed => {
-                self.is_freecam = !self.is_freecam;
-                if self.is_freecam {
-                    self.freecam_pos = current_pos;
-                    self.freecam_yaw = current_yaw;
-                    self.freecam_pitch = current_pitch;
-                }
-                FREECAM_ACTIVE.store(self.is_freecam, Ordering::Relaxed);
-            }
             _ => {}
         }
     }
 
     pub fn turn_camera(&mut self, xo: f64, yo: f64, player_yaw: &mut f32, player_pitch: &mut f32) {
-        if self.is_freecam {
-            self.freecam_yaw = (self.freecam_yaw + xo as f32 * 0.15).rem_euclid(360.0);
-            self.freecam_pitch = (self.freecam_pitch + yo as f32 * 0.15).clamp(-90.0, 90.0);
-        } else if self.is_freelock {
+        if self.is_freelock {
             self.freelock_yaw = (self.freelock_yaw + xo as f32 * 0.15).rem_euclid(360.0);
             self.freelock_pitch = (self.freelock_pitch + yo as f32 * 0.15).clamp(-90.0, 90.0);
         } else {
@@ -152,15 +136,13 @@ impl CameraState {
     pub fn override_camera_view(
         &self,
         original_pos: [f64; 3],
-        original_yaw: f32,
-        original_pitch: f32,
+        _original_yaw: f32,
+        _original_pitch: f32,
     ) -> ([f64; 3], f32, f32) {
-        if self.is_freecam {
-            (self.freecam_pos, self.freecam_yaw, self.freecam_pitch)
-        } else if self.is_freelock {
+        if self.is_freelock {
             (original_pos, self.freelock_yaw, self.freelock_pitch)
         } else {
-            (original_pos, original_yaw, original_pitch)
+            (original_pos, _original_yaw, _original_pitch)
         }
     }
 }
@@ -170,10 +152,6 @@ pub static GLOBAL_CAMERA: Mutex<CameraState> = Mutex::new(CameraState {
     is_freelock: false,
     freelock_yaw: 0.0,
     freelock_pitch: 0.0,
-    is_freecam: false,
-    freecam_pos: [0.0, 0.0, 0.0],
-    freecam_yaw: 0.0,
-    freecam_pitch: 0.0,
 });
 
 pub fn get_zoom_descriptor() -> Option<ZoomDescriptor> {
@@ -825,10 +803,9 @@ impl mod_api::Hooks for CameraUtilsMod {
 
     fn calculate_player_turn(&self, _host: &dyn mod_api::ClientHost, event: &mut mod_api::CalculatePlayerTurnEvent) {
         let freelock = FREELOCK_ACTIVE.load(Ordering::Relaxed);
-        let freecam = FREECAM_ACTIVE.load(Ordering::Relaxed);
 
-        if freelock || freecam {
-            // Decouple body turning when looking around freely
+        if freelock {
+            // Decouple body turning when looking around freely in Freelock
             event.mouse_sensitivity = 0.0;
         }
     }

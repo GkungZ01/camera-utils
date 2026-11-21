@@ -1,6 +1,25 @@
+# Rust & Cargo
 target/
-**/*.rs.bk
 Cargo.lock
+**/*.rs.bk
+
+# Horizon
 .horizon/
+*.hmod
+
+# Temporary / Agent workspaces
+notes/.agents/temp/
+
+# Residual / Third-party specs
+fabric.mod.json
+
+# IDE & Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
 .DS_Store
 Thumbs.db
+desktop.ini
